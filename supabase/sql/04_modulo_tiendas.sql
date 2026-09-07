@@ -1,0 +1,197 @@
+-- Sistema de Marcación y Horarios
+-- Script 04: soporte transaccional para el módulo de Tiendas
+-- Ejecutar manualmente desde Supabase > SQL Editor DESPUÉS de 03_tipo_trabajador.sql.
+
+create index if not exists stores_active_name_idx
+  on public.stores(active, name);
+
+create unique index if not exists stores_code_normalized_idx
+  on public.stores(upper(trim(code)));
+
+create or replace function public.save_store_record(
+  p_store_id uuid,
+  p_code text,
+  p_name text,
+  p_address text,
+  p_active boolean,
+  p_actor_id uuid,
+  p_assign_actor boolean,
+  p_audit_action text
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_store_id uuid;
+  v_code text := upper(trim(p_code));
+  v_name text := trim(p_name);
+  v_address text := nullif(trim(coalesce(p_address, '')), '');
+  v_has_primary boolean;
+begin
+  if length(v_code) < 2 then
+    raise exception 'El código de tienda debe tener al menos 2 caracteres' using errcode = '22023';
+  end if;
+
+  if length(v_name) < 2 then
+    raise exception 'El nombre de tienda debe tener al menos 2 caracteres' using errcode = '22023';
+  end if;
+
+  if p_store_id is null then
+    insert into public.stores (
+      code,
+      name,
+      address,
+      active,
+      created_by
+    )
+    values (
+      v_code,
+      v_name,
+      v_address,
+      p_active,
+      p_actor_id
+    )
+    returning id into v_store_id;
+
+    if p_assign_actor then
+      select exists (
+        select 1
+        from public.user_store_assignments
+        where user_id = p_actor_id
+          and is_primary = true
+      ) into v_has_primary;
+
+      insert into public.user_store_assignments (
+        user_id,
+        store_id,
+        is_primary,
+        assigned_by
+      )
+      values (
+        p_actor_id,
+        v_store_id,
+        not v_has_primary,
+        p_actor_id
+      )
+      on conflict (user_id, store_id) do nothing;
+    end if;
+  else
+    update public.stores
+    set
+      code = v_code,
+      name = v_name,
+      address = v_address,
+      active = p_active,
+      updated_at = now()
+    where id = p_store_id
+    returning id into v_store_id;
+
+    if v_store_id is null then
+      raise exception 'La tienda no existe' using errcode = 'P0002';
+    end if;
+  end if;
+
+  insert into public.audit_logs (
+    actor_id,
+    action,
+    entity_type,
+    entity_id,
+    payload
+  )
+  values (
+    p_actor_id,
+    p_audit_action,
+    'store',
+    v_store_id,
+    jsonb_build_object(
+      'code', v_code,
+      'name', v_name,
+      'address', v_address,
+      'active', p_active
+    )
+  );
+
+  return v_store_id;
+end;
+$$;
+
+create or replace function public.delete_store_record(
+  p_store_id uuid,
+  p_actor_id uuid
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_store public.stores%rowtype;
+begin
+  select * into v_store
+  from public.stores
+  where id = p_store_id;
+
+  if not found then
+    raise exception 'La tienda no existe' using errcode = 'P0002';
+  end if;
+
+  if exists (select 1 from public.user_store_assignments where store_id = p_store_id) then
+    raise exception 'No se puede eliminar: la tienda tiene personal asignado' using errcode = 'P0001';
+  end if;
+
+  if exists (select 1 from public.schedules where store_id = p_store_id) then
+    raise exception 'No se puede eliminar: la tienda tiene horarios relacionados' using errcode = 'P0001';
+  end if;
+
+  if exists (select 1 from public.attendance_records where store_id = p_store_id)
+     or exists (select 1 from public.attendance_events where store_id = p_store_id) then
+    raise exception 'No se puede eliminar: la tienda tiene marcaciones relacionadas' using errcode = 'P0001';
+  end if;
+
+  insert into public.audit_logs (
+    actor_id,
+    action,
+    entity_type,
+    entity_id,
+    payload
+  )
+  values (
+    p_actor_id,
+    'store.delete',
+    'store',
+    p_store_id,
+    jsonb_build_object(
+      'code', v_store.code,
+      'name', v_store.name,
+      'address', v_store.address,
+      'active', v_store.active
+    )
+  );
+
+  delete from public.stores
+  where id = p_store_id;
+end;
+$$;
+
+revoke all on function public.save_store_record(
+  uuid, text, text, text, boolean, uuid, boolean, text
+) from public, anon, authenticated;
+
+grant execute on function public.save_store_record(
+  uuid, text, text, text, boolean, uuid, boolean, text
+) to service_role;
+
+revoke all on function public.delete_store_record(uuid, uuid)
+from public, anon, authenticated;
+
+grant execute on function public.delete_store_record(uuid, uuid)
+to service_role;
+
+comment on function public.save_store_record(
+  uuid, text, text, text, boolean, uuid, boolean, text
+) is 'Crea o actualiza una tienda y registra auditoría. Puede autoasignar al creador. Solo servidor.';
+
+comment on function public.delete_store_record(uuid, uuid)
+is 'Elimina físicamente una tienda únicamente cuando no tiene dependencias. Solo servidor.';
