@@ -1,23 +1,23 @@
 # Módulo de Horarios
 
-El módulo `/horarios` administra la planificación semanal por tienda.
+El módulo `/horarios` administra la planificación semanal por tienda y replica el formato operativo que se utiliza para compartir horarios en Excel.
 
 ## Estructura
 
 - una fila por trabajador activo asignado a la tienda;
 - siete columnas, de lunes a domingo;
 - cada celda representa el horario de ese trabajador para una fecha;
-- `Libre` se representa sin horario activo para ese día.
+- `D` representa descanso en el formato exportado y se guarda sin horario activo para ese día.
 
 ## Accesos rápidos
 
-| Código | Turno | Ingreso | Salida | Almuerzo |
-| --- | --- | --- | --- | --- |
-| `A` | Apertura | 09:00 | 17:00 | 60 min |
-| `C` | Cierre | 15:00 | 22:00 | 0 min preasignados |
-| `AC` | Apertura / cierre | 09:00 | 22:00 | 120 min |
-| `P` | Personalizado | editable | editable | editable |
-| `L` | Libre | — | — | — |
+| Código | Turno | Ingreso | Salida | Almuerzo | Horas efectivas |
+| --- | --- | --- | --- | --- | --- |
+| `A` | Apertura | 09:00 | 17:00 | 60 min | 7 h |
+| `C` | Cierre | 15:00 | 22:00 | 0 min preasignados | 7 h |
+| `AC` | Apertura / cierre | 09:00 | 22:00 | 120 min | 11 h |
+| `P` | Personalizado | editable | editable | editable | calculadas |
+| `D` | Descanso | — | — | — | 0 h |
 
 El turno C no preasigna almuerzo porque no se definió una duración específica. Puede convertirse a `P` para personalizarlo.
 
@@ -46,7 +46,24 @@ Toda escritura se valida nuevamente en servidor y se ejecuta con la clave secret
 - tolerancia entre 0 y 180 minutos;
 - que no exista otro horario activo del trabajador en otra tienda para la misma fecha.
 
-Marcar `Libre` solo desactiva el horario activo perteneciente a la tienda que se está editando.
+Marcar descanso solo desactiva el horario activo perteneciente a la tienda que se está editando.
+
+## Copiar y exportar
+
+Después de guardar la semana, el módulo muestra un bloque `Formato para envío` con dos acciones:
+
+- `Copiar tabla`: copia al portapapeles la última versión guardada con tienda, código, DNI/CE, cargo, días, fechas y horarios; puede pegarse directamente en Excel o Google Sheets.
+- `Exportar Excel`: genera un archivo `.xlsx` listo para compartir.
+
+El Excel contiene tres bloques en una misma hoja:
+
+1. horario detallado con rangos de hora y `D` en descansos;
+2. equivalencia por códigos `A`, `C`, `AC`, `P` y `D`;
+3. horas efectivas por trabajador y día, descontando los minutos de almuerzo.
+
+El archivo incluye el número de semana ISO (`WKxx`), encabezado azul, columnas de DNI/CE y cargo, días/fechas, bordes, fila de Supervisor resaltada y nombre de archivo por tienda y semana.
+
+La exportación usa la última versión persistida en Supabase para que el archivo enviado coincida con el horario oficial guardado.
 
 ## Cambios sin guardar
 
