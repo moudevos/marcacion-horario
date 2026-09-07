@@ -68,7 +68,7 @@ function initialOption(options: RolePositionOption[]) {
 
 export function PersonalClient({ initialData }: { initialData: PersonalModuleData }) {
   const router = useRouter();
-  const [staff, setStaff] = useState(initialData.staff);
+  const staff = initialData.staff;
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | AppRole>("all");
   const [workerTypeFilter, setWorkerTypeFilter] = useState<"all" | "undefined" | WorkerType>("all");
@@ -101,10 +101,6 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
   const selectedPosition = useWatch({ control, name: "position" });
   const selectedRole = useWatch({ control, name: "role" });
   const selectedStores = useWatch({ control, name: "storeIds" }) ?? [];
-
-  useEffect(() => {
-    setStaff(initialData.staff);
-  }, [initialData.staff]);
 
   const allowedOptions = useMemo<RolePositionOption[]>(() => {
     if (dialog?.mode === "edit" && dialog.record.isSelf && dialog.record.role && dialog.record.position) {
