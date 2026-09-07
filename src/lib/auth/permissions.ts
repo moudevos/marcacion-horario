@@ -1,4 +1,12 @@
-import type { AppModule, AppRole, CrudAction, EmployeePosition, StaffIdentity } from "@/types/domain";
+import {
+  APP_ROLES,
+  EMPLOYEE_POSITIONS,
+  type AppModule,
+  type AppRole,
+  type CrudAction,
+  type EmployeePosition,
+  type StaffIdentity,
+} from "@/types/domain";
 
 type PermissionMatrix = Record<AppRole, Record<AppModule, readonly CrudAction[]>>;
 
@@ -46,10 +54,15 @@ export function canAccessStore(actor: StaffIdentity, storeId: string) {
   return actor.role === "superuser" || actor.position === "rh" || actor.storeIds.includes(storeId);
 }
 
+export function isValidRolePosition(role: AppRole, position: EmployeePosition) {
+  return role === "superuser" || DEFAULT_ROLE_BY_POSITION[position] === role;
+}
+
 export function canCreateStaff(
   actor: Pick<StaffIdentity, "role" | "position">,
   target: { role: AppRole; position: EmployeePosition },
 ) {
+  if (!isValidRolePosition(target.role, target.position)) return false;
   if (actor.role === "superuser") return true;
 
   if (actor.role === "admin" && actor.position === "rh") {
@@ -72,4 +85,17 @@ export function canCreateStaff(
   }
 
   return false;
+}
+
+export function canManageStaff(
+  actor: Pick<StaffIdentity, "role" | "position">,
+  target: { role: AppRole; position: EmployeePosition },
+) {
+  return canCreateStaff(actor, target);
+}
+
+export function getAssignableRolePositions(actor: Pick<StaffIdentity, "role" | "position">) {
+  return EMPLOYEE_POSITIONS.flatMap((position) =>
+    APP_ROLES.map((role) => ({ role, position })).filter((target) => canCreateStaff(actor, target)),
+  );
 }
