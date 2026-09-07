@@ -1,3 +1,4 @@
+import { ScheduleExportActions } from "./schedule-export-actions";
 import { WeeklyScheduleClient } from "./weekly-schedule-client";
 import { getWeeklySchedulesModuleData } from "@/lib/schedules/service";
 
@@ -41,9 +42,12 @@ export default async function SchedulesPage({ searchParams }: PageProps) {
   }
 
   return (
-    <WeeklyScheduleClient
-      key={`${result.data.selectedStoreId ?? "none"}_${result.data.weekStart}`}
-      initialData={result.data}
-    />
+    <div className="space-y-5">
+      <WeeklyScheduleClient
+        key={`${result.data.selectedStoreId ?? "none"}_${result.data.weekStart}`}
+        initialData={result.data}
+      />
+      <ScheduleExportActions data={result.data} />
+    </div>
   );
 }
