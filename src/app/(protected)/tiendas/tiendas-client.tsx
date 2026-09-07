@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import Swal from "sweetalert2";
 import {
   Ban,
@@ -10,6 +10,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Edit3,
+  ExternalLink,
   Loader2,
   MapPin,
   Plus,
@@ -20,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { confirmDiscardChanges } from "@/lib/ui/confirm-unsaved";
+import { StoreLocationPicker } from "@/components/stores/store-location-picker";
 import type { StoreRecord, StoresModuleData } from "@/types/stores";
 import { createStoreAction, deleteStoreAction, toggleStoreActiveAction, updateStoreAction } from "./actions";
 
@@ -27,12 +29,25 @@ type StoreFormValues = {
   code: string;
   name: string;
   address: string;
+  latitude: string;
+  longitude: string;
 };
 
 type DialogState =
   | { mode: "create"; record: null }
   | { mode: "edit"; record: StoreRecord }
   | null;
+
+function parseCoordinate(value: string) {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapUrl(latitude: number, longitude: number) {
+  return `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=18/${latitude}/${longitude}`;
+}
 
 export function TiendasClient({ initialData }: { initialData: StoresModuleData }) {
   const router = useRouter();
@@ -46,20 +61,34 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
     register,
     handleSubmit,
     reset,
+    setValue,
+    setError,
+    clearErrors,
+    control,
     formState: { errors, isDirty },
   } = useForm<StoreFormValues>({
-    defaultValues: { code: "", name: "", address: "" },
+    defaultValues: { code: "", name: "", address: "", latitude: "", longitude: "" },
   });
+
+  const latitudeValue = useWatch({ control, name: "latitude" }) ?? "";
+  const longitudeValue = useWatch({ control, name: "longitude" }) ?? "";
+  const selectedLatitude = parseCoordinate(latitudeValue);
+  const selectedLongitude = parseCoordinate(longitudeValue);
 
   const filteredStores = useMemo(() => {
     const term = search.trim().toLowerCase();
 
     return stores.filter((store) => {
+      const coordinates =
+        store.latitude !== null && store.longitude !== null
+          ? `${store.latitude} ${store.longitude}`
+          : "";
       const matchesSearch =
         !term ||
         store.code.toLowerCase().includes(term) ||
         store.name.toLowerCase().includes(term) ||
-        (store.address ?? "").toLowerCase().includes(term);
+        (store.address ?? "").toLowerCase().includes(term) ||
+        coordinates.includes(term);
       const matchesStatus =
         statusFilter === "all" ||
         (statusFilter === "active" && store.active) ||
@@ -70,10 +99,11 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
   }, [search, statusFilter, stores]);
 
   const activeCount = stores.filter((store) => store.active).length;
+  const locatedCount = stores.filter((store) => store.latitude !== null && store.longitude !== null).length;
   const assignedPersonnel = stores.reduce((total, store) => total + store.personnelCount, 0);
 
   function openCreate() {
-    reset({ code: "", name: "", address: "" });
+    reset({ code: "", name: "", address: "", latitude: "", longitude: "" });
     setDialog({ mode: "create", record: null });
   }
 
@@ -82,8 +112,22 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
       code: record.code,
       name: record.name,
       address: record.address ?? "",
+      latitude: record.latitude?.toString() ?? "",
+      longitude: record.longitude?.toString() ?? "",
     });
     setDialog({ mode: "edit", record });
+  }
+
+  function updateMapPoint(latitude: number | null, longitude: number | null) {
+    clearErrors(["latitude", "longitude"]);
+    setValue("latitude", latitude === null ? "" : latitude.toFixed(6), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+    setValue("longitude", longitude === null ? "" : longitude.toFixed(6), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
   }
 
   async function requestClose() {
@@ -93,11 +137,45 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
   }
 
   const submitForm = handleSubmit((values) => {
+    const latitude = parseCoordinate(values.latitude);
+    const longitude = parseCoordinate(values.longitude);
+
+    if (values.latitude.trim() && latitude === null) {
+      setError("latitude", { type: "manual", message: "Ingresa una latitud válida" });
+      return;
+    }
+    if (values.longitude.trim() && longitude === null) {
+      setError("longitude", { type: "manual", message: "Ingresa una longitud válida" });
+      return;
+    }
+    if (latitude !== null && (latitude < -90 || latitude > 90)) {
+      setError("latitude", { type: "manual", message: "La latitud debe estar entre -90 y 90" });
+      return;
+    }
+    if (longitude !== null && (longitude < -180 || longitude > 180)) {
+      setError("longitude", { type: "manual", message: "La longitud debe estar entre -180 y 180" });
+      return;
+    }
+    if ((latitude === null) !== (longitude === null)) {
+      const message = "Completa latitud y longitud, o deja ambas vacías";
+      setError("latitude", { type: "manual", message });
+      setError("longitude", { type: "manual", message });
+      return;
+    }
+
+    const payload = {
+      code: values.code,
+      name: values.name,
+      address: values.address,
+      latitude,
+      longitude,
+    };
+
     startTransition(async () => {
       const result =
         dialog?.mode === "edit"
-          ? await updateStoreAction({ ...values, id: dialog.record.id, active: dialog.record.active })
-          : await createStoreAction({ ...values, active: true });
+          ? await updateStoreAction({ ...payload, id: dialog.record.id, active: dialog.record.active })
+          : await createStoreAction({ ...payload, active: true });
 
       if (!result.ok) {
         await Swal.fire({ title: "No se pudo guardar", text: result.message, icon: "error" });
@@ -179,7 +257,7 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Tiendas</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Administra puntos de trabajo, estado operativo y su relación con personal, horarios y marcaciones.
+            Administra puntos de trabajo, ubicación geográfica, estado operativo y su relación con personal, horarios y marcaciones.
           </p>
         </div>
 
@@ -198,7 +276,7 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Total visible" value={stores.length} />
         <Metric label="Activas" value={activeCount} tone="green" />
-        <Metric label="Inactivas" value={stores.length - activeCount} tone="slate" />
+        <Metric label="Con ubicación" value={locatedCount} tone="violet" />
         <Metric label="Asignaciones de personal" value={assignedPersonnel} tone="blue" />
       </section>
 
@@ -209,7 +287,7 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por código, nombre o dirección..."
+              placeholder="Buscar por código, nombre, dirección o coordenadas..."
               className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </label>
@@ -230,7 +308,7 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
             <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">Tienda</th>
-                <th className="px-4 py-3">Dirección</th>
+                <th className="px-4 py-3">Dirección / ubicación</th>
                 <th className="px-4 py-3">Personal</th>
                 <th className="px-4 py-3">Horarios</th>
                 <th className="px-4 py-3">Marcaciones</th>
@@ -239,69 +317,83 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredStores.map((record) => (
-                <tr key={record.id} className="align-top hover:bg-slate-50/70">
-                  <td className="px-4 py-4">
-                    <div className="flex items-start gap-3">
-                      <div className="rounded-xl bg-slate-100 p-2 text-slate-600">
-                        <Building2 className="h-4 w-4" />
+              {filteredStores.map((record) => {
+                const located = record.latitude !== null && record.longitude !== null;
+                return (
+                  <tr key={record.id} className="align-top hover:bg-slate-50/70">
+                    <td className="px-4 py-4">
+                      <div className="flex items-start gap-3">
+                        <div className="rounded-xl bg-slate-100 p-2 text-slate-600">
+                          <Building2 className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900">{record.name}</p>
+                          <p className="mt-1 font-mono text-xs font-semibold text-blue-700">{record.code}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold text-slate-900">{record.name}</p>
-                        <p className="mt-1 font-mono text-xs font-semibold text-blue-700">{record.code}</p>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="max-w-80 space-y-2 text-xs text-slate-600">
+                        <div className="flex items-start gap-1.5">
+                          <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{record.address || "Sin dirección registrada"}</span>
+                        </div>
+                        {located ? (
+                          <div className="flex flex-wrap items-center gap-2 pl-5">
+                            <span className="font-mono text-[11px] text-slate-500">
+                              {record.latitude?.toFixed(6)}, {record.longitude?.toFixed(6)}
+                            </span>
+                            <a
+                              href={mapUrl(record.latitude as number, record.longitude as number)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline"
+                            >
+                              Ver mapa <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        ) : (
+                          <p className="pl-5 text-[11px] text-amber-700">Sin punto geográfico</p>
+                        )}
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex max-w-72 items-start gap-1.5 text-xs text-slate-600">
-                      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <span>{record.address || "Sin dirección registrada"}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-4">
-                    <UsageBadge icon={UserRound} value={record.personnelCount} />
-                  </td>
-                  <td className="px-4 py-4">
-                    <UsageBadge icon={CalendarDays} value={record.schedulesCount} />
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className="font-semibold text-slate-800">{record.attendanceCount}</span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${record.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-                      {record.active ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
-                      {record.active ? "Activa" : "Inactiva"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex justify-end gap-2">
-                      {record.canEdit && (
-                        <button type="button" onClick={() => openEdit(record)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100">
-                          <Edit3 className="h-3.5 w-3.5" />
-                          Editar
-                        </button>
-                      )}
-                      {record.canToggleActive && (
-                        <button
-                          type="button"
-                          onClick={() => toggleActive(record)}
-                          disabled={isPending}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${record.active ? "border border-rose-200 text-rose-700 hover:bg-rose-50" : "border border-emerald-200 text-emerald-700 hover:bg-emerald-50"}`}
-                        >
-                          {record.active ? <Ban className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                          {record.active ? "Desactivar" : "Reactivar"}
-                        </button>
-                      )}
-                      {record.canDelete && (
-                        <button type="button" onClick={() => deleteStore(record)} disabled={isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-2.5 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Eliminar
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-4"><UsageBadge icon={UserRound} value={record.personnelCount} /></td>
+                    <td className="px-4 py-4"><UsageBadge icon={CalendarDays} value={record.schedulesCount} /></td>
+                    <td className="px-4 py-4"><span className="font-semibold text-slate-800">{record.attendanceCount}</span></td>
+                    <td className="px-4 py-4">
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${record.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                        {record.active ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
+                        {record.active ? "Activa" : "Inactiva"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex justify-end gap-2">
+                        {record.canEdit && (
+                          <button type="button" onClick={() => openEdit(record)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100">
+                            <Edit3 className="h-3.5 w-3.5" />Editar
+                          </button>
+                        )}
+                        {record.canToggleActive && (
+                          <button
+                            type="button"
+                            onClick={() => toggleActive(record)}
+                            disabled={isPending}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${record.active ? "border border-rose-200 text-rose-700 hover:bg-rose-50" : "border border-emerald-200 text-emerald-700 hover:bg-emerald-50"}`}
+                          >
+                            {record.active ? <Ban className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                            {record.active ? "Desactivar" : "Reactivar"}
+                          </button>
+                        )}
+                        {record.canDelete && (
+                          <button type="button" onClick={() => deleteStore(record)} disabled={isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-2.5 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">
+                            <Trash2 className="h-3.5 w-3.5" />Eliminar
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
 
               {filteredStores.length === 0 && (
                 <tr>
@@ -324,8 +416,8 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
             if (event.target === event.currentTarget) void requestClose();
           }}
         >
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+          <div className="max-h-[94vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="sticky top-0 z-20 flex items-start justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
                   {dialog.mode === "create" ? "Alta de tienda" : "Edición de tienda"}
@@ -375,6 +467,50 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
                 </Field>
               </div>
 
+              <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <MapPin className="h-4 w-4 text-blue-700" />
+                    Ubicación geográfica
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Puedes escribir las coordenadas o seleccionar el punto directamente en el mapa. Este dato podrá usarse más adelante para validar marcaciones por proximidad.
+                  </p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Latitud" error={errors.latitude?.message}>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min={-90}
+                      max={90}
+                      {...register("latitude")}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      placeholder="-12.046374"
+                    />
+                  </Field>
+                  <Field label="Longitud" error={errors.longitude?.message}>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min={-180}
+                      max={180}
+                      {...register("longitude")}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-mono text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      placeholder="-77.042793"
+                    />
+                  </Field>
+                </div>
+
+                <StoreLocationPicker
+                  latitude={selectedLatitude}
+                  longitude={selectedLongitude}
+                  disabled={isPending}
+                  onChange={updateMapPoint}
+                />
+              </section>
+
               {isDirty && (
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
@@ -399,11 +535,12 @@ export function TiendasClient({ initialData }: { initialData: StoresModuleData }
   );
 }
 
-function Metric({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "green" | "blue" }) {
+function Metric({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "green" | "blue" | "violet" }) {
   const tones = {
     slate: "border-slate-200 bg-white text-slate-950",
     green: "border-emerald-200 bg-emerald-50 text-emerald-950",
     blue: "border-blue-200 bg-blue-50 text-blue-950",
+    violet: "border-violet-200 bg-violet-50 text-violet-950",
   };
 
   return (

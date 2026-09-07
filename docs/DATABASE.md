@@ -16,7 +16,10 @@ Los scripts actuales son:
 
 1. `supabase/sql/01_esquema_inicial.sql`;
 2. `supabase/sql/02_modulo_personal.sql`;
-3. `supabase/sql/03_tipo_trabajador.sql`.
+3. `supabase/sql/03_tipo_trabajador.sql`;
+4. `supabase/sql/04_modulo_tiendas.sql`;
+5. `supabase/sql/05_horarios_semanales.sql`;
+6. `supabase/sql/06_ubicacion_tiendas.sql`.
 
 ## `profiles`
 
@@ -30,7 +33,11 @@ Contiene el DNI asociado al colaborador. No se concede acceso directo a `anon` n
 
 ## `stores`
 
-Tiendas o puntos de trabajo.
+Tiendas o puntos de trabajo. Además de código, nombre, dirección y estado, puede almacenar una ubicación geográfica WGS84 mediante `latitude` y `longitude`.
+
+Las coordenadas son opcionales para mantener compatibilidad con tiendas existentes, pero si se registra una debe registrarse también la otra. PostgreSQL valida latitud entre -90 y 90 y longitud entre -180 y 180.
+
+El CRUD permite escribir las coordenadas manualmente o seleccionar el punto en un mapa OpenStreetMap. Esta ubicación queda disponible para una futura validación de marcaciones por proximidad/geocerca; el script 06 todavía no activa reglas de distancia.
 
 ## `user_store_assignments`
 

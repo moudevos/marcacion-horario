@@ -3,6 +3,8 @@ export type StoreRecord = {
   code: string;
   name: string;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
   active: boolean;
   personnelCount: number;
   schedulesCount: number;

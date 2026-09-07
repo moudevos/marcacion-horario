@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const storeBaseSchema = z.object({
+const storeFieldsSchema = z.object({
   code: z
     .string()
     .trim()
@@ -10,14 +10,34 @@ const storeBaseSchema = z.object({
     .transform((value) => value.toUpperCase()),
   name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres").max(120),
   address: z.string().trim().max(250, "La dirección admite como máximo 250 caracteres"),
+  latitude: z.number().min(-90, "Latitud inválida").max(90, "Latitud inválida").nullable(),
+  longitude: z.number().min(-180, "Longitud inválida").max(180, "Longitud inválida").nullable(),
   active: z.boolean(),
 });
 
-export const createStoreSchema = storeBaseSchema;
+function validateLocation(
+  value: { latitude: number | null; longitude: number | null },
+  ctx: z.RefinementCtx,
+) {
+  if ((value.latitude === null) !== (value.longitude === null)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["latitude"],
+      message: "La ubicación requiere latitud y longitud",
+    });
+    ctx.addIssue({
+      code: "custom",
+      path: ["longitude"],
+      message: "La ubicación requiere latitud y longitud",
+    });
+  }
+}
 
-export const updateStoreSchema = storeBaseSchema.extend({
-  id: z.string().uuid(),
-});
+export const createStoreSchema = storeFieldsSchema.superRefine(validateLocation);
+
+export const updateStoreSchema = storeFieldsSchema
+  .extend({ id: z.string().uuid() })
+  .superRefine(validateLocation);
 
 export const storeIdSchema = z.string().uuid();
 

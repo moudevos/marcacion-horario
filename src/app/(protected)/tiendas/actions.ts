@@ -13,6 +13,8 @@ type StoreSnapshot = {
   code: string;
   name: string;
   address: string | null;
+  latitude: number | null;
+  longitude: number | null;
   active: boolean;
 };
 
@@ -37,7 +39,7 @@ function formatError(error: unknown) {
 async function loadStore(admin: AdminClient, id: string): Promise<StoreSnapshot> {
   const { data, error } = await admin
     .from("stores")
-    .select("id, code, name, address, active")
+    .select("id, code, name, address, latitude, longitude, active")
     .eq("id", id)
     .single();
 
@@ -52,6 +54,8 @@ async function saveStore(
     code: string;
     name: string;
     address: string;
+    latitude: number | null;
+    longitude: number | null;
     active: boolean;
     actorId: string;
     assignActor: boolean;
@@ -63,6 +67,8 @@ async function saveStore(
     p_code: data.code,
     p_name: data.name,
     p_address: data.address,
+    p_latitude: data.latitude,
+    p_longitude: data.longitude,
     p_active: data.active,
     p_actor_id: data.actorId,
     p_assign_actor: data.assignActor,
@@ -95,6 +101,8 @@ export async function createStoreAction(input: unknown): Promise<StoreActionResu
       code: data.code,
       name: data.name,
       address: data.address,
+      latitude: data.latitude,
+      longitude: data.longitude,
       active: data.active,
       actorId: actor.id,
       assignActor,
@@ -103,6 +111,7 @@ export async function createStoreAction(input: unknown): Promise<StoreActionResu
 
     revalidatePath("/tiendas");
     revalidatePath("/personal");
+    revalidatePath("/horarios");
     return success("Tienda creada correctamente");
   } catch (error) {
     return failure(formatError(error));
@@ -127,6 +136,8 @@ export async function updateStoreAction(input: unknown): Promise<StoreActionResu
       code: data.code,
       name: data.name,
       address: data.address,
+      latitude: data.latitude,
+      longitude: data.longitude,
       active: snapshot.active,
       actorId: actor.id,
       assignActor: false,
@@ -135,6 +146,7 @@ export async function updateStoreAction(input: unknown): Promise<StoreActionResu
 
     revalidatePath("/tiendas");
     revalidatePath("/personal");
+    revalidatePath("/horarios");
     return success("Tienda actualizada correctamente");
   } catch (error) {
     return failure(formatError(error));
@@ -157,6 +169,8 @@ export async function toggleStoreActiveAction(input: unknown): Promise<StoreActi
       code: snapshot.code,
       name: snapshot.name,
       address: snapshot.address ?? "",
+      latitude: snapshot.latitude,
+      longitude: snapshot.longitude,
       active: !snapshot.active,
       actorId: actor.id,
       assignActor: false,
@@ -164,6 +178,7 @@ export async function toggleStoreActiveAction(input: unknown): Promise<StoreActi
     });
 
     revalidatePath("/tiendas");
+    revalidatePath("/horarios");
     return success(snapshot.active ? "Tienda desactivada" : "Tienda reactivada");
   } catch (error) {
     return failure(formatError(error));
@@ -192,6 +207,7 @@ export async function deleteStoreAction(input: unknown): Promise<StoreActionResu
 
     revalidatePath("/tiendas");
     revalidatePath("/personal");
+    revalidatePath("/horarios");
     return success("Tienda eliminada definitivamente");
   } catch (error) {
     return failure(formatError(error));
