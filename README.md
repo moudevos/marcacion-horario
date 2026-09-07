@@ -54,16 +54,20 @@ SUPABASE_SECRET_KEY=
 
 `SUPABASE_SECRET_KEY` es exclusivamente de servidor. Nunca debe exponerse con prefijo `NEXT_PUBLIC_`.
 
-## Supabase
+## Supabase y SQL Editor
 
-La primera migración está en `supabase/migrations/202609070001_initial_schema.sql`.
+Los cambios de base de datos se administran mediante scripts SQL manuales en `supabase/sql/`.
 
-Con Supabase CLI:
+Para configurar una base nueva:
 
-```bash
-supabase link --project-ref <project-ref>
-supabase db push
-```
+1. abrir el proyecto en Supabase;
+2. ir a **SQL Editor**;
+3. abrir `supabase/sql/01_esquema_inicial.sql` del repositorio;
+4. copiar todo el contenido;
+5. ejecutarlo una sola vez;
+6. verificar las tablas y políticas creadas antes de continuar con el siguiente script.
+
+No se utilizará `supabase db push` ni se aplicarán migraciones automáticamente al proyecto remoto. Cada cambio posterior deberá agregarse como un nuevo archivo numerado, por ejemplo `02_...sql`, `03_...sql`, conservando el historial.
 
 ## Vercel
 

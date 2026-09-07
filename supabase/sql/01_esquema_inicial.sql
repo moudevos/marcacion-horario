@@ -1,3 +1,8 @@
+-- Sistema de Marcación y Horarios
+-- Script 01: esquema inicial
+-- Ejecutar manualmente desde Supabase > SQL Editor.
+-- Ejecutar una sola vez sobre una base nueva del proyecto.
+
 create extension if not exists pgcrypto;
 
 create type public.app_role as enum ('superuser', 'admin', 'store_manager', 'viewer');
