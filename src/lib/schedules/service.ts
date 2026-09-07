@@ -37,6 +37,7 @@ type RawProfile = {
   worker_type: WorkerType | null;
   active: boolean;
 };
+type RawIdentifier = { profile_id: string; dni: string };
 type RawSchedule = {
   id: string;
   employee_id: string;
@@ -90,17 +91,33 @@ export async function getWeeklySchedulesModuleData(input?: {
   let employees: ScheduleEmployee[] = [];
 
   if (employeeIds.length > 0) {
-    const { data: profiles, error: profilesError } = await admin
-      .from("profiles")
-      .select("id, full_name, position, worker_type, active")
-      .in("id", employeeIds)
-      .eq("active", true)
-      .order("full_name");
-    if (profilesError) throw new Error(profilesError.message);
+    const [profilesResponse, identifiersResponse] = await Promise.all([
+      admin
+        .from("profiles")
+        .select("id, full_name, position, worker_type, active")
+        .in("id", employeeIds)
+        .eq("active", true)
+        .order("full_name"),
+      admin
+        .from("employee_identifiers")
+        .select("profile_id, dni")
+        .in("profile_id", employeeIds),
+    ]);
 
-    employees = ((profiles ?? []) as RawProfile[]).map((profile) => ({
+    if (profilesResponse.error) throw new Error(profilesResponse.error.message);
+    if (identifiersResponse.error) throw new Error(identifiersResponse.error.message);
+
+    const dniByProfile = new Map(
+      ((identifiersResponse.data ?? []) as RawIdentifier[]).map((identifier) => [
+        identifier.profile_id,
+        identifier.dni,
+      ]),
+    );
+
+    employees = ((profilesResponse.data ?? []) as RawProfile[]).map((profile) => ({
       id: profile.id,
       fullName: profile.full_name,
+      dni: dniByProfile.get(profile.id) ?? "",
       position: profile.position,
       workerType: profile.worker_type,
     }));
