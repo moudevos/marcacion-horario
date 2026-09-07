@@ -2,7 +2,7 @@ import "server-only";
 import { can, canCreateStaff, getAssignableRolePositions } from "@/lib/auth/permissions";
 import { assertPermission, getActorContext } from "@/lib/auth/require-permission";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { AppRole, EmployeePosition } from "@/types/domain";
+import type { AppRole, EmployeePosition, WorkerType } from "@/types/domain";
 import type { PersonalModuleData, PersonalRecord, StoreOption } from "@/types/personal";
 
 type RawProfile = {
@@ -10,6 +10,7 @@ type RawProfile = {
   full_name: string;
   role: AppRole | null;
   position: EmployeePosition | null;
+  worker_type: WorkerType | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -45,7 +46,10 @@ export async function getPersonalModuleData(): Promise<PersonalModuleData> {
 
   const admin = createAdminClient();
   const [profilesResponse, identifiersResponse, assignmentsResponse, storesResponse, authUsers] = await Promise.all([
-    admin.from("profiles").select("id, full_name, role, position, active, created_at, updated_at").order("full_name"),
+    admin
+      .from("profiles")
+      .select("id, full_name, role, position, worker_type, active, created_at, updated_at")
+      .order("full_name"),
     admin.from("employee_identifiers").select("profile_id, dni"),
     admin.from("user_store_assignments").select("user_id, store_id, is_primary"),
     admin.from("stores").select("id, code, name, active").order("name"),
@@ -113,6 +117,7 @@ export async function getPersonalModuleData(): Promise<PersonalModuleData> {
         dni: canReadSensitive || isSelf ? dni || "—" : maskDni(dni),
         role: profile.role,
         position: profile.position,
+        workerType: profile.worker_type,
         active: profile.active,
         stores: targetStores,
         createdAt: profile.created_at,

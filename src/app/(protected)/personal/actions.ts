@@ -11,7 +11,7 @@ import {
   type UpdatePersonalInput,
 } from "@/lib/personal/schemas";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { AppRole, EmployeePosition, StaffIdentity } from "@/types/domain";
+import type { AppRole, EmployeePosition, StaffIdentity, WorkerType } from "@/types/domain";
 import type { PersonalActionResult } from "@/types/personal";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -23,6 +23,7 @@ type PersonalSnapshot = {
   dni: string | null;
   role: AppRole | null;
   position: EmployeePosition | null;
+  workerType: WorkerType | null;
   active: boolean;
   storeIds: string[];
 };
@@ -91,7 +92,11 @@ async function assertStoresExist(admin: AdminClient, storeIds: string[]) {
 
 async function loadSnapshot(admin: AdminClient, userId: string): Promise<PersonalSnapshot> {
   const [profileResponse, identifierResponse, assignmentsResponse, authResponse] = await Promise.all([
-    admin.from("profiles").select("id, full_name, role, position, active").eq("id", userId).single(),
+    admin
+      .from("profiles")
+      .select("id, full_name, role, position, worker_type, active")
+      .eq("id", userId)
+      .single(),
     admin.from("employee_identifiers").select("dni").eq("profile_id", userId).maybeSingle(),
     admin.from("user_store_assignments").select("store_id").eq("user_id", userId),
     admin.auth.admin.getUserById(userId),
@@ -107,6 +112,7 @@ async function loadSnapshot(admin: AdminClient, userId: string): Promise<Persona
     full_name: string;
     role: AppRole | null;
     position: EmployeePosition | null;
+    worker_type: WorkerType | null;
     active: boolean;
   };
 
@@ -117,6 +123,7 @@ async function loadSnapshot(admin: AdminClient, userId: string): Promise<Persona
     dni: (identifierResponse.data as { dni?: string } | null)?.dni ?? null,
     role: profile.role,
     position: profile.position,
+    workerType: profile.worker_type,
     active: profile.active,
     storeIds: (assignmentsResponse.data ?? []).map((assignment) => assignment.store_id),
   };
@@ -130,6 +137,7 @@ async function saveDatabaseRecord(
     dni: string | null;
     role: AppRole | null;
     position: EmployeePosition | null;
+    workerType: WorkerType | null;
     active: boolean;
     storeIds: string[];
   },
@@ -141,6 +149,7 @@ async function saveDatabaseRecord(
     p_full_name: data.fullName,
     p_role: data.role,
     p_position: data.position,
+    p_worker_type: data.workerType,
     p_active: data.active,
     p_dni: data.dni,
     p_store_ids: normalizeStoreIds(data.storeIds),
@@ -157,7 +166,13 @@ async function saveDatabaseRecord(
 function assertCanManageTarget(
   actor: StaffIdentity,
   snapshot: PersonalSnapshot,
-  desired: { role: AppRole; position: EmployeePosition; active: boolean; storeIds: string[] },
+  desired: {
+    role: AppRole;
+    position: EmployeePosition;
+    workerType: WorkerType | null;
+    active: boolean;
+    storeIds: string[];
+  },
 ) {
   assertPermission(actor, "personal", "update");
 
@@ -165,12 +180,19 @@ function assertCanManageTarget(
     if (
       snapshot.role !== desired.role ||
       snapshot.position !== desired.position ||
+      snapshot.workerType !== desired.workerType ||
       snapshot.active !== desired.active ||
       !sameStoreIds(snapshot.storeIds, desired.storeIds)
     ) {
-      throw new AuthorizationError("No puedes cambiar tu propio rol, cargo, estado o alcance de tiendas");
+      throw new AuthorizationError(
+        "No puedes cambiar tu propio rol, cargo, tipo de trabajador, estado o alcance de tiendas",
+      );
     }
     return;
+  }
+
+  if (!desired.workerType) {
+    throw new AuthorizationError("Debes definir si el trabajador es Full Time o Part Time");
   }
 
   assertExistingTargetStoreScope(actor, snapshot.storeIds);
@@ -231,6 +253,7 @@ export async function createPersonalAction(input: unknown): Promise<PersonalActi
           dni: data.dni,
           role: data.role,
           position: data.position,
+          workerType: data.workerType,
           active: data.active,
           storeIds: data.storeIds,
         },
@@ -271,6 +294,7 @@ export async function updatePersonalAction(input: unknown): Promise<PersonalActi
         dni: data.dni,
         role: data.role,
         position: data.position,
+        workerType: data.workerType,
         active: data.active,
         storeIds: data.storeIds,
       },
@@ -295,6 +319,7 @@ export async function updatePersonalAction(input: unknown): Promise<PersonalActi
           dni: snapshot.dni,
           role: snapshot.role,
           position: snapshot.position,
+          workerType: snapshot.workerType,
           active: snapshot.active,
           storeIds: snapshot.storeIds,
         },

@@ -14,7 +14,7 @@ Aplicación web para gestión de personal, horarios y marcaciones de asistencia.
 
 ## Módulos iniciales
 
-1. **Personal**: CRUD funcional de colaboradores, credenciales, rol, cargo, tiendas y estado.
+1. **Personal**: CRUD funcional de colaboradores, credenciales, rol, cargo, tipo de trabajador, tiendas y estado.
 2. **Horarios**: gestión de horarios por colaborador y tienda.
 3. **Marcaciones**: consulta y corrección administrativa de asistencia.
 4. **Marcación pública**: `/marcacion`, sin login; inicialmente solicita DNI. La estrategia final de validación se implementará después.
@@ -35,6 +35,15 @@ Aplicación web para gestión de personal, horarios y marcaciones de asistencia.
 - `rh`
 
 Cargo y rol son conceptos independientes. La autorización combina **rol + cargo + tiendas asignadas**.
+
+## Tipo de trabajador
+
+El módulo de Personal distingue la jornada contractual mediante dos valores controlados:
+
+- `full_time` → Full Time
+- `part_time` → Part Time
+
+Este dato se administra por separado del cargo y del rol.
 
 ## Desarrollo local
 
@@ -58,15 +67,16 @@ SUPABASE_SECRET_KEY=
 
 Los cambios de base de datos se administran mediante scripts SQL manuales en `supabase/sql/`.
 
-Para configurar una base nueva:
+Para configurar la base actual:
 
 1. abrir el proyecto en Supabase;
 2. ir a **SQL Editor**;
 3. ejecutar `supabase/sql/01_esquema_inicial.sql`;
 4. ejecutar `supabase/sql/02_modulo_personal.sql`;
-5. verificar tablas, funciones y políticas antes de continuar con scripts posteriores.
+5. ejecutar `supabase/sql/03_tipo_trabajador.sql`;
+6. revisar la consulta final del script 03 para clasificar trabajadores existentes que aún estén sin tipo.
 
-No se utilizará `supabase db push` ni se aplicarán migraciones automáticamente al proyecto remoto. Cada cambio posterior deberá agregarse como un nuevo archivo numerado, por ejemplo `03_...sql`, `04_...sql`, conservando el historial.
+No se utilizará `supabase db push` ni se aplicarán migraciones automáticamente al proyecto remoto. Cada cambio posterior deberá agregarse como un nuevo archivo numerado, conservando el historial.
 
 ## Módulo de Personal
 
@@ -76,6 +86,7 @@ El CRUD de Personal está implementado en `/personal` e incluye:
 - edición de nombre, correo y DNI;
 - contraseña temporal y cambio opcional de contraseña;
 - asignación controlada de rol y cargo;
+- clasificación Full Time / Part Time;
 - asignación de tiendas según alcance;
 - activación y desactivación lógica;
 - búsqueda y filtros;

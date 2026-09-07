@@ -1,4 +1,4 @@
-import type { AppRole, EmployeePosition } from "@/types/domain";
+import type { AppRole, EmployeePosition, WorkerType } from "@/types/domain";
 
 export type StoreOption = {
   id: string;
@@ -19,6 +19,7 @@ export type PersonalRecord = {
   dni: string;
   role: AppRole | null;
   position: EmployeePosition | null;
+  workerType: WorkerType | null;
   active: boolean;
   stores: StoreOption[];
   createdAt: string;

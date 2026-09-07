@@ -12,11 +12,17 @@ Reglas de trabajo:
 4. antes de ejecutar un script se revisa su impacto en tablas, datos y políticas RLS;
 5. no utilizaremos `supabase db push` para aplicar cambios automáticamente al proyecto remoto.
 
-El primer script es `supabase/sql/01_esquema_inicial.sql`.
+Los scripts actuales son:
+
+1. `supabase/sql/01_esquema_inicial.sql`;
+2. `supabase/sql/02_modulo_personal.sql`;
+3. `supabase/sql/03_tipo_trabajador.sql`.
 
 ## `profiles`
 
-Extiende `auth.users`. Contiene nombre, rol, cargo y estado. No contiene DNI ni credenciales sensibles.
+Extiende `auth.users`. Contiene nombre, rol, cargo, tipo de trabajador y estado. No contiene DNI ni credenciales sensibles.
+
+`worker_type` usa el enum `public.worker_type` con los valores `full_time` y `part_time`. Puede ser `NULL` únicamente para registros existentes pendientes de clasificación; las nuevas altas del módulo de Personal exigen un tipo definido.
 
 ## `employee_identifiers`
 

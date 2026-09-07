@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { APP_ROLES, EMPLOYEE_POSITIONS } from "@/types/domain";
+import { APP_ROLES, EMPLOYEE_POSITIONS, WORKER_TYPES } from "@/types/domain";
 
 const roleSchema = z.enum(APP_ROLES);
 const positionSchema = z.enum(EMPLOYEE_POSITIONS);
+const workerTypeSchema = z.enum(WORKER_TYPES);
 
 const personalBaseSchema = z.object({
   fullName: z.string().trim().min(3, "El nombre debe tener al menos 3 caracteres").max(120),
@@ -29,6 +30,7 @@ function validateStoreRequirement(
 
 export const createPersonalSchema = personalBaseSchema
   .extend({
+    workerType: workerTypeSchema,
     password: z.string().min(8, "La contraseña temporal debe tener al menos 8 caracteres").max(128),
   })
   .superRefine(validateStoreRequirement);
@@ -36,6 +38,7 @@ export const createPersonalSchema = personalBaseSchema
 export const updatePersonalSchema = personalBaseSchema
   .extend({
     id: z.string().uuid(),
+    workerType: workerTypeSchema.nullable(),
     password: z
       .string()
       .max(128)

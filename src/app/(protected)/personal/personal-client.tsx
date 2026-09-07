@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import Swal from "sweetalert2";
 import {
   Ban,
+  BriefcaseBusiness,
   CheckCircle2,
   Edit3,
   Loader2,
@@ -18,7 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { createPersonalAction, togglePersonalActiveAction, updatePersonalAction } from "./actions";
-import type { AppRole, EmployeePosition } from "@/types/domain";
+import type { AppRole, EmployeePosition, WorkerType } from "@/types/domain";
 import type { PersonalModuleData, PersonalRecord, RolePositionOption } from "@/types/personal";
 
 type PersonalFormValues = {
@@ -28,6 +29,7 @@ type PersonalFormValues = {
   password: string;
   role: AppRole;
   position: EmployeePosition;
+  workerType: WorkerType | "";
   storeIds: string[];
 };
 
@@ -51,6 +53,11 @@ const POSITION_LABELS: Record<EmployeePosition, string> = {
   rh: "RH",
 };
 
+const WORKER_TYPE_LABELS: Record<WorkerType, string> = {
+  full_time: "Full Time",
+  part_time: "Part Time",
+};
+
 function uniquePositions(options: RolePositionOption[]) {
   return [...new Set(options.map((option) => option.position))];
 }
@@ -59,15 +66,12 @@ function initialOption(options: RolePositionOption[]) {
   return options[0] ?? { role: "viewer" as AppRole, position: "promotor" as EmployeePosition };
 }
 
-function getStatusText(active: boolean) {
-  return active ? "Activo" : "Inactivo";
-}
-
 export function PersonalClient({ initialData }: { initialData: PersonalModuleData }) {
   const router = useRouter();
   const [staff, setStaff] = useState(initialData.staff);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | AppRole>("all");
+  const [workerTypeFilter, setWorkerTypeFilter] = useState<"all" | "undefined" | WorkerType>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [dialog, setDialog] = useState<DialogState>(null);
   const [isPending, startTransition] = useTransition();
@@ -79,7 +83,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
     reset,
     setError,
     setValue,
-    watch,
+    control,
     formState: { errors },
   } = useForm<PersonalFormValues>({
     defaultValues: {
@@ -89,9 +93,14 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
       password: "",
       role: defaultAssignment.role,
       position: defaultAssignment.position,
+      workerType: "full_time",
       storeIds: [],
     },
   });
+
+  const selectedPosition = useWatch({ control, name: "position" });
+  const selectedRole = useWatch({ control, name: "role" });
+  const selectedStores = useWatch({ control, name: "storeIds" }) ?? [];
 
   useEffect(() => {
     setStaff(initialData.staff);
@@ -103,10 +112,6 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
     }
     return initialData.createOptions;
   }, [dialog, initialData.createOptions]);
-
-  const selectedPosition = watch("position");
-  const selectedRole = watch("role");
-  const selectedStores = watch("storeIds") ?? [];
 
   const positionOptions = useMemo(() => uniquePositions(allowedOptions), [allowedOptions]);
   const roleOptions = useMemo(
@@ -124,25 +129,32 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
     const term = search.trim().toLowerCase();
 
     return staff.filter((record) => {
+      const workerLabel = record.workerType ? WORKER_TYPE_LABELS[record.workerType].toLowerCase() : "sin definir";
       const matchesSearch =
         !term ||
         record.fullName.toLowerCase().includes(term) ||
         record.email.toLowerCase().includes(term) ||
         record.dni.toLowerCase().includes(term) ||
+        workerLabel.includes(term) ||
         record.stores.some((store) => `${store.code} ${store.name}`.toLowerCase().includes(term));
 
       const matchesRole = roleFilter === "all" || record.role === roleFilter;
+      const matchesWorkerType =
+        workerTypeFilter === "all" ||
+        (workerTypeFilter === "undefined" ? record.workerType === null : record.workerType === workerTypeFilter);
       const matchesStatus =
         statusFilter === "all" ||
         (statusFilter === "active" && record.active) ||
         (statusFilter === "inactive" && !record.active);
 
-      return matchesSearch && matchesRole && matchesStatus;
+      return matchesSearch && matchesRole && matchesWorkerType && matchesStatus;
     });
-  }, [roleFilter, search, staff, statusFilter]);
+  }, [roleFilter, search, staff, statusFilter, workerTypeFilter]);
 
   const activeCount = staff.filter((record) => record.active).length;
-  const inactiveCount = staff.length - activeCount;
+  const fullTimeCount = staff.filter((record) => record.workerType === "full_time").length;
+  const partTimeCount = staff.filter((record) => record.workerType === "part_time").length;
+  const undefinedWorkerTypeCount = staff.filter((record) => record.workerType === null).length;
 
   function openCreate() {
     const option = initialOption(initialData.createOptions);
@@ -153,6 +165,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
       password: "",
       role: option.role,
       position: option.position,
+      workerType: "full_time",
       storeIds: [],
     });
     setDialog({ mode: "create", record: null });
@@ -167,6 +180,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
       password: "",
       role: record.role,
       position: record.position,
+      workerType: record.workerType ?? (record.isSelf ? "" : "full_time"),
       storeIds: record.stores.map((store) => store.id),
     });
     setDialog({ mode: "edit", record });
@@ -179,16 +193,36 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
   const submitForm = handleSubmit((values) => {
     const active = dialog?.mode === "edit" ? dialog.record.active : true;
 
+    if (dialog?.mode === "create" && !values.workerType) {
+      setError("workerType", { type: "manual", message: "Selecciona Full Time o Part Time" });
+      return;
+    }
+
+    if (dialog?.mode === "edit" && !dialog.record.isSelf && !values.workerType) {
+      setError("workerType", { type: "manual", message: "Selecciona Full Time o Part Time" });
+      return;
+    }
+
     if (values.role !== "superuser" && values.position !== "rh" && values.storeIds.length === 0) {
       setError("storeIds", { type: "manual", message: "Selecciona al menos una tienda" });
       return;
     }
 
+    const editingSelf = dialog?.mode === "edit" && dialog.record.isSelf;
+    const payload = {
+      ...values,
+      role: editingSelf && dialog.record.role ? dialog.record.role : values.role,
+      position: editingSelf && dialog.record.position ? dialog.record.position : values.position,
+      workerType: editingSelf ? dialog.record.workerType : values.workerType || null,
+      storeIds: editingSelf ? dialog.record.stores.map((store) => store.id) : values.storeIds,
+      active,
+    };
+
     startTransition(async () => {
       const result =
         dialog?.mode === "edit"
-          ? await updatePersonalAction({ ...values, id: dialog.record.id, active })
-          : await createPersonalAction({ ...values, active });
+          ? await updatePersonalAction({ ...payload, id: dialog.record.id })
+          : await createPersonalAction(payload);
 
       if (!result.ok) {
         await Swal.fire({ title: "No se pudo guardar", text: result.message, icon: "error" });
@@ -196,7 +230,13 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
       }
 
       setDialog(null);
-      await Swal.fire({ title: "Operación completada", text: result.message, icon: "success", timer: 1600, showConfirmButton: false });
+      await Swal.fire({
+        title: "Operación completada",
+        text: result.message,
+        icon: "success",
+        timer: 1600,
+        showConfirmButton: false,
+      });
       router.refresh();
     });
   });
@@ -223,7 +263,13 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
         return;
       }
 
-      await Swal.fire({ title: "Estado actualizado", text: result.message, icon: "success", timer: 1400, showConfirmButton: false });
+      await Swal.fire({
+        title: "Estado actualizado",
+        text: result.message,
+        icon: "success",
+        timer: 1400,
+        showConfirmButton: false,
+      });
       router.refresh();
     });
   }
@@ -241,7 +287,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Personal</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Administra cuentas, DNI, roles, cargos, tiendas asignadas y estado de acceso respetando la jerarquía del sistema.
+            Administra cuentas, DNI, rol, cargo, tipo de trabajador, tiendas asignadas y estado de acceso.
           </p>
         </div>
 
@@ -257,29 +303,27 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
         )}
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total visible</p>
-          <p className="mt-2 text-2xl font-bold text-slate-950">{staff.length}</p>
+      {undefinedWorkerTypeCount > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          Hay {undefinedWorkerTypeCount} trabajador{undefinedWorkerTypeCount === 1 ? "" : "es"} existente{undefinedWorkerTypeCount === 1 ? "" : "s"} sin tipo definido. Edítalos para indicar Full Time o Part Time.
         </div>
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Activos</p>
-          <p className="mt-2 text-2xl font-bold text-emerald-950">{activeCount}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Inactivos</p>
-          <p className="mt-2 text-2xl font-bold text-slate-800">{inactiveCount}</p>
-        </div>
+      )}
+
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Total visible" value={staff.length} />
+        <Metric label="Activos" value={activeCount} tone="green" />
+        <Metric label="Full Time" value={fullTimeCount} tone="blue" />
+        <Metric label="Part Time" value={partTimeCount} tone="violet" />
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid gap-3 border-b border-slate-200 p-4 lg:grid-cols-[1fr_220px_180px]">
+        <div className="grid gap-3 border-b border-slate-200 p-4 xl:grid-cols-[1fr_190px_180px_170px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar por nombre, correo, DNI o tienda..."
+              placeholder="Buscar por nombre, correo, DNI, tienda o tipo..."
               className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </label>
@@ -294,6 +338,17 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
             <option value="admin">Administrador</option>
             <option value="store_manager">Gestor de tienda</option>
             <option value="viewer">Visualizador</option>
+          </select>
+
+          <select
+            value={workerTypeFilter}
+            onChange={(event) => setWorkerTypeFilter(event.target.value as "all" | "undefined" | WorkerType)}
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="all">Todos los tipos</option>
+            <option value="full_time">Full Time</option>
+            <option value="part_time">Part Time</option>
+            <option value="undefined">Sin definir</option>
           </select>
 
           <select
@@ -314,6 +369,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                 <th className="px-4 py-3">Personal</th>
                 <th className="px-4 py-3">DNI</th>
                 <th className="px-4 py-3">Rol / cargo</th>
+                <th className="px-4 py-3">Tipo</th>
                 <th className="px-4 py-3">Tiendas</th>
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3 text-right">Acciones</th>
@@ -350,6 +406,16 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                     )}
                   </td>
                   <td className="px-4 py-4">
+                    {record.workerType ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                        <BriefcaseBusiness className="h-3.5 w-3.5" />
+                        {WORKER_TYPE_LABELS[record.workerType]}
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">Sin definir</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-4">
                     <div className="flex max-w-72 flex-wrap gap-1.5">
                       {record.stores.length > 0 ? (
                         record.stores.map((store) => (
@@ -364,13 +430,9 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                     </div>
                   </td>
                   <td className="px-4 py-4">
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        record.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${record.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
                       {record.active ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
-                      {getStatusText(record.active)}
+                      {record.active ? "Activo" : "Inactivo"}
                     </span>
                   </td>
                   <td className="px-4 py-4">
@@ -390,19 +452,13 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                           type="button"
                           onClick={() => toggleActive(record)}
                           disabled={isPending}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${
-                            record.active
-                              ? "border border-rose-200 text-rose-700 hover:bg-rose-50"
-                              : "border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
-                          }`}
+                          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${record.active ? "border border-rose-200 text-rose-700 hover:bg-rose-50" : "border border-emerald-200 text-emerald-700 hover:bg-emerald-50"}`}
                         >
                           {record.active ? <Ban className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                           {record.active ? "Desactivar" : "Reactivar"}
                         </button>
                       )}
-                      {!record.canEdit && !record.canToggleActive && (
-                        <span className="py-2 text-xs text-slate-400">Solo lectura</span>
-                      )}
+                      {!record.canEdit && !record.canToggleActive && <span className="py-2 text-xs text-slate-400">Solo lectura</span>}
                     </div>
                   </td>
                 </tr>
@@ -410,7 +466,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
 
               {filteredStaff.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center">
+                  <td colSpan={7} className="px-4 py-12 text-center">
                     <UserRound className="mx-auto h-8 w-8 text-slate-300" />
                     <p className="mt-3 font-medium text-slate-700">No se encontró personal</p>
                     <p className="mt-1 text-xs text-slate-500">Modifica los filtros o el término de búsqueda.</p>
@@ -443,13 +499,12 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
               {editingSelf && (
                 <div className="flex gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-                  Puedes actualizar tus datos de acceso, pero no tu propio rol, cargo, estado ni alcance de tiendas.
+                  Puedes actualizar tus datos de acceso, pero no tu propio rol, cargo, tipo de trabajador, estado ni alcance de tiendas.
                 </div>
               )}
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="sm:col-span-2">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Nombre completo</span>
+                <Field label="Nombre completo" error={errors.fullName?.message} wide>
                   <input
                     {...register("fullName", {
                       required: "El nombre es obligatorio",
@@ -458,22 +513,13 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                     className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder="Nombres y apellidos"
                   />
-                  {errors.fullName && <p className="mt-1 text-xs text-rose-600">{errors.fullName.message}</p>}
-                </label>
+                </Field>
 
-                <label>
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Correo de acceso</span>
-                  <input
-                    type="email"
-                    {...register("email", { required: "El correo es obligatorio" })}
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    placeholder="usuario@empresa.com"
-                  />
-                  {errors.email && <p className="mt-1 text-xs text-rose-600">{errors.email.message}</p>}
-                </label>
+                <Field label="Correo de acceso" error={errors.email?.message}>
+                  <input type="email" {...register("email", { required: "El correo es obligatorio" })} className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" placeholder="usuario@empresa.com" />
+                </Field>
 
-                <label>
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">DNI</span>
+                <Field label="DNI" error={errors.dni?.message}>
                   <input
                     inputMode="numeric"
                     maxLength={8}
@@ -484,40 +530,36 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                     className="w-full rounded-xl border border-slate-300 px-3 py-2.5 font-mono text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder="12345678"
                   />
-                  {errors.dni && <p className="mt-1 text-xs text-rose-600">{errors.dni.message}</p>}
-                </label>
+                </Field>
 
-                <label>
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Cargo</span>
-                  <select
-                    {...register("position", { required: true })}
-                    disabled={editingSelf}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  >
-                    {positionOptions.map((position) => (
-                      <option key={position} value={position}>{POSITION_LABELS[position]}</option>
-                    ))}
+                <Field label="Cargo">
+                  <select {...register("position", { required: true })} disabled={editingSelf} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500">
+                    {positionOptions.map((position) => <option key={position} value={position}>{POSITION_LABELS[position]}</option>)}
                   </select>
-                </label>
+                </Field>
 
-                <label>
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Rol del sistema</span>
-                  <select
-                    {...register("role", { required: true })}
-                    disabled={editingSelf}
-                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none disabled:bg-slate-100 disabled:text-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  >
-                    {roleOptions.map((role) => (
-                      <option key={role} value={role}>{ROLE_LABELS[role]}</option>
-                    ))}
+                <Field label="Rol del sistema">
+                  <select {...register("role", { required: true })} disabled={editingSelf} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500">
+                    {roleOptions.map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
                   </select>
-                </label>
+                </Field>
 
-                <label className="sm:col-span-2">
-                  <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <ShieldCheck className="h-4 w-4" />
-                    {dialog.mode === "create" ? "Contraseña temporal" : "Nueva contraseña"}
-                  </span>
+                <Field label="Tipo de trabajador" error={errors.workerType?.message} wide>
+                  <select
+                    {...register("workerType", { required: dialog.mode === "create" || !editingSelf ? "Selecciona Full Time o Part Time" : false })}
+                    disabled={editingSelf}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
+                  >
+                    {editingSelf && !dialog.record.workerType && <option value="">Sin definir</option>}
+                    <option value="full_time">Full Time</option>
+                    <option value="part_time">Part Time</option>
+                  </select>
+                  {dialog.mode === "edit" && !dialog.record.workerType && !editingSelf && (
+                    <p className="mt-1 text-xs text-amber-700">Este registro existía antes de incorporar el tipo de trabajador. Debes definirlo al guardar.</p>
+                  )}
+                </Field>
+
+                <Field label={dialog.mode === "create" ? "Contraseña temporal" : "Nueva contraseña"} error={errors.password?.message} wide>
                   <input
                     type="password"
                     autoComplete="new-password"
@@ -528,9 +570,8 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                     className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder={dialog.mode === "create" ? "Mínimo 8 caracteres" : "Déjala vacía para conservarla"}
                   />
-                  {errors.password && <p className="mt-1 text-xs text-rose-600">{errors.password.message}</p>}
                   <p className="mt-1 text-xs text-slate-500">La contraseña se envía directamente a Supabase Auth y nunca se guarda en nuestras tablas.</p>
-                </label>
+                </Field>
               </div>
 
               <fieldset disabled={editingSelf} className="rounded-2xl border border-slate-200 p-4 disabled:opacity-60">
@@ -542,12 +583,7 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
                 {initialData.stores.length > 0 ? (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {initialData.stores.map((store) => (
-                      <label
-                        key={store.id}
-                        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                          selectedStores.includes(store.id) ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"
-                        }`}
-                      >
+                      <label key={store.id} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${selectedStores.includes(store.id) ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}>
                         <input type="checkbox" value={store.id} {...register("storeIds")} className="mt-1 h-4 w-4 rounded border-slate-300" />
                         <span>
                           <span className="block text-sm font-medium text-slate-800">{store.name}</span>
@@ -565,19 +601,10 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
               </fieldset>
 
               <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={closeDialog}
-                  disabled={isPending}
-                  className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
+                <button type="button" onClick={closeDialog} disabled={isPending} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Cancelar
                 </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
+                <button type="submit" disabled={isPending} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
                   {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
                   {dialog.mode === "create" ? "Crear personal" : "Guardar cambios"}
                 </button>
@@ -587,5 +614,41 @@ export function PersonalClient({ initialData }: { initialData: PersonalModuleDat
         </div>
       )}
     </div>
+  );
+}
+
+function Metric({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "green" | "blue" | "violet" }) {
+  const tones = {
+    slate: "border-slate-200 bg-white text-slate-950",
+    green: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    blue: "border-blue-200 bg-blue-50 text-blue-950",
+    violet: "border-violet-200 bg-violet-50 text-violet-950",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone]}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-2 text-2xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  error,
+  wide = false,
+  children,
+}: {
+  label: string;
+  error?: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={wide ? "sm:col-span-2" : undefined}>
+      <span className="mb-1.5 block text-sm font-medium text-slate-700">{label}</span>
+      {children}
+      {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
+    </label>
   );
 }
