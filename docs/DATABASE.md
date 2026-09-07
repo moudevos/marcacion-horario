@@ -2,7 +2,11 @@
 
 ## `profiles`
 
-Extiende `auth.users`. Contiene DNI, nombre, rol, cargo y estado. Los roles/cargos no se aceptan automáticamente desde metadata de registro para evitar escalamiento de privilegios.
+Extiende `auth.users`. Contiene nombre, rol, cargo y estado. No contiene DNI ni credenciales sensibles.
+
+## `employee_identifiers`
+
+Contiene el DNI asociado al colaborador. No se concede acceso directo a `anon` ni a `authenticated`; solo debe consultarse desde operaciones seguras de servidor. Esto reduce la exposición de identificadores personales y facilita aplicar medidas anti-enumeración en la marcación pública.
 
 ## `stores`
 
@@ -22,12 +26,20 @@ Estado consolidado de asistencia por colaborador y fecha: entrada, salida, estad
 
 ## `attendance_events`
 
-Historial inmutable de eventos de asistencia. Se utilizará para conservar la trazabilidad de entradas, salidas y correcciones.
+Historial inmutable de eventos de asistencia. Conserva la trazabilidad de entradas, salidas y correcciones.
 
 ## `audit_logs`
 
 Base para auditoría administrativa futura.
 
-## RLS
+## Política de escritura
 
-La migración habilita RLS desde el inicio. No se otorga acceso a `anon` para marcaciones. Las políticas iniciales permiten lectura y actualización según rol/cargo/tiendas, pero las operaciones sensibles de creación de usuarios y marcación pública deberán ejecutarse en servidor con validaciones explícitas.
+RLS habilita lectura por alcance, pero la migración no concede mutaciones operativas directas a clientes autenticados. Personal, tiendas, horarios y correcciones de marcación deben pasar por Server Actions/Route Handlers que:
+
+1. validen sesión;
+2. resuelvan rol, cargo y tiendas;
+3. apliquen `src/lib/auth/require-permission.ts`;
+4. usen la clave secreta únicamente en servidor;
+5. escriban auditoría cuando corresponda.
+
+La ruta pública tampoco obtiene acceso SQL anónimo.

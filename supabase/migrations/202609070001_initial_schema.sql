@@ -8,14 +8,20 @@ create type public.attendance_source as enum ('public_dni', 'system', 'admin');
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  dni text unique,
   full_name text not null default '',
   role public.app_role,
   position public.employee_position,
   active boolean not null default true,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.employee_identifiers (
+  profile_id uuid primary key references public.profiles(id) on delete cascade,
+  dni text not null unique,
+  created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint profiles_dni_format check (dni is null or dni ~ '^\d{8}$')
+  constraint employee_identifiers_dni_format check (dni ~ '^\d{8}$')
 );
 
 create table public.stores (
@@ -118,6 +124,8 @@ $$;
 
 create trigger profiles_set_updated_at before update on public.profiles
 for each row execute function public.set_updated_at();
+create trigger employee_identifiers_set_updated_at before update on public.employee_identifiers
+for each row execute function public.set_updated_at();
 create trigger stores_set_updated_at before update on public.stores
 for each row execute function public.set_updated_at();
 create trigger schedules_set_updated_at before update on public.schedules
@@ -132,12 +140,8 @@ security definer
 set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, dni, full_name)
-  values (
-    new.id,
-    nullif(new.raw_user_meta_data ->> 'dni', ''),
-    coalesce(new.raw_user_meta_data ->> 'full_name', '')
-  )
+  insert into public.profiles (id, full_name)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', ''))
   on conflict (id) do nothing;
   return new;
 end;
@@ -199,6 +203,7 @@ as $$
 $$;
 
 alter table public.profiles enable row level security;
+alter table public.employee_identifiers enable row level security;
 alter table public.stores enable row level security;
 alter table public.user_store_assignments enable row level security;
 alter table public.schedules enable row level security;
@@ -223,27 +228,6 @@ using (
   or public.has_store_access(id)
 );
 
-create policy stores_insert_superuser on public.stores
-for insert to authenticated
-with check (public.current_app_role() = 'superuser');
-
-create policy stores_update_scoped on public.stores
-for update to authenticated
-using (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager')
-    and public.has_store_access(id)
-  )
-)
-with check (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager')
-    and public.has_store_access(id)
-  )
-);
-
 create policy assignments_read on public.user_store_assignments
 for select to authenticated
 using (
@@ -262,37 +246,6 @@ using (
   or public.has_store_access(store_id)
 );
 
-create policy schedules_insert_scoped on public.schedules
-for insert to authenticated
-with check (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager')
-    and public.has_store_access(store_id)
-  )
-);
-
-create policy schedules_update_scoped on public.schedules
-for update to authenticated
-using (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager')
-    and public.has_store_access(store_id)
-  )
-)
-with check (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager')
-    and public.has_store_access(store_id)
-  )
-);
-
-create policy schedules_delete_superuser on public.schedules
-for delete to authenticated
-using (public.current_app_role() = 'superuser');
-
 create policy attendance_read on public.attendance_records
 for select to authenticated
 using (
@@ -300,23 +253,6 @@ using (
   or public.current_app_role() = 'superuser'
   or public.current_position() = 'rh'
   or public.has_store_access(store_id)
-);
-
-create policy attendance_update_scoped on public.attendance_records
-for update to authenticated
-using (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager', 'viewer')
-    and public.has_store_access(store_id)
-  )
-)
-with check (
-  public.current_app_role() = 'superuser'
-  or (
-    public.current_app_role() in ('admin', 'store_manager', 'viewer')
-    and public.has_store_access(store_id)
-  )
 );
 
 create policy attendance_events_read on public.attendance_events
@@ -328,10 +264,6 @@ using (
   or public.has_store_access(store_id)
 );
 
-create policy attendance_events_insert_superuser on public.attendance_events
-for insert to authenticated
-with check (public.current_app_role() = 'superuser');
-
 create policy audit_logs_read on public.audit_logs
 for select to authenticated
 using (
@@ -340,6 +272,7 @@ using (
 );
 
 revoke all on public.profiles from anon;
+revoke all on public.employee_identifiers from anon, authenticated;
 revoke all on public.stores from anon;
 revoke all on public.user_store_assignments from anon;
 revoke all on public.schedules from anon;
@@ -347,10 +280,18 @@ revoke all on public.attendance_records from anon;
 revoke all on public.attendance_events from anon;
 revoke all on public.audit_logs from anon;
 
+revoke insert, update, delete on public.profiles from authenticated;
+revoke insert, update, delete on public.stores from authenticated;
+revoke insert, update, delete on public.user_store_assignments from authenticated;
+revoke insert, update, delete on public.schedules from authenticated;
+revoke insert, update, delete on public.attendance_records from authenticated;
+revoke insert, update, delete on public.attendance_events from authenticated;
+revoke insert, update, delete on public.audit_logs from authenticated;
+
 grant select on public.profiles to authenticated;
-grant select, insert, update on public.stores to authenticated;
+grant select on public.stores to authenticated;
 grant select on public.user_store_assignments to authenticated;
-grant select, insert, update, delete on public.schedules to authenticated;
-grant select, update on public.attendance_records to authenticated;
-grant select, insert on public.attendance_events to authenticated;
+grant select on public.schedules to authenticated;
+grant select on public.attendance_records to authenticated;
+grant select on public.attendance_events to authenticated;
 grant select on public.audit_logs to authenticated;
