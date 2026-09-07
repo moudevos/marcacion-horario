@@ -15,17 +15,17 @@ export default async function ProtectedLayout({ children }: { children: React.Re
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, role, position")
+    .select("full_name, role, position, active")
     .eq("id", userId)
     .maybeSingle();
 
+  if (!profile?.active || !profile.role || !profile.position) {
+    redirect("/login?error=access");
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 lg:flex">
-      <AppSidebar
-        fullName={profile?.full_name ?? "Usuario"}
-        role={profile?.role ?? "sin rol"}
-        position={profile?.position ?? "sin cargo"}
-      />
+      <AppSidebar fullName={profile.full_name || "Usuario"} role={profile.role} position={profile.position} />
       <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
     </div>
   );

@@ -14,7 +14,7 @@ Aplicación web para gestión de personal, horarios y marcaciones de asistencia.
 
 ## Módulos iniciales
 
-1. **Personal**: gestión de colaboradores.
+1. **Personal**: CRUD funcional de colaboradores, credenciales, rol, cargo, tiendas y estado.
 2. **Horarios**: gestión de horarios por colaborador y tienda.
 3. **Marcaciones**: consulta y corrección administrativa de asistencia.
 4. **Marcación pública**: `/marcacion`, sin login; inicialmente solicita DNI. La estrategia final de validación se implementará después.
@@ -62,12 +62,27 @@ Para configurar una base nueva:
 
 1. abrir el proyecto en Supabase;
 2. ir a **SQL Editor**;
-3. abrir `supabase/sql/01_esquema_inicial.sql` del repositorio;
-4. copiar todo el contenido;
-5. ejecutarlo una sola vez;
-6. verificar las tablas y políticas creadas antes de continuar con el siguiente script.
+3. ejecutar `supabase/sql/01_esquema_inicial.sql`;
+4. ejecutar `supabase/sql/02_modulo_personal.sql`;
+5. verificar tablas, funciones y políticas antes de continuar con scripts posteriores.
 
-No se utilizará `supabase db push` ni se aplicarán migraciones automáticamente al proyecto remoto. Cada cambio posterior deberá agregarse como un nuevo archivo numerado, por ejemplo `02_...sql`, `03_...sql`, conservando el historial.
+No se utilizará `supabase db push` ni se aplicarán migraciones automáticamente al proyecto remoto. Cada cambio posterior deberá agregarse como un nuevo archivo numerado, por ejemplo `03_...sql`, `04_...sql`, conservando el historial.
+
+## Módulo de Personal
+
+El CRUD de Personal está implementado en `/personal` e incluye:
+
+- alta de usuarios en Supabase Auth;
+- edición de nombre, correo y DNI;
+- contraseña temporal y cambio opcional de contraseña;
+- asignación controlada de rol y cargo;
+- asignación de tiendas según alcance;
+- activación y desactivación lógica;
+- búsqueda y filtros;
+- auditoría de operaciones;
+- validación de jerarquía en servidor.
+
+Consulta `docs/PERSONAL.md` para el detalle funcional y de seguridad.
 
 ## Vercel
 
@@ -76,8 +91,10 @@ Conecta este repositorio al proyecto de Vercel y registra las mismas variables d
 ## Seguridad
 
 - Las páginas administrativas están protegidas por Supabase Auth.
+- Los perfiles inactivos o sin rol/cargo no acceden a módulos protegidos.
 - Las tablas usan Row Level Security.
 - La ruta pública de marcación no tiene acceso directo anónimo a tablas.
-- La creación de usuarios privilegiados deberá ejecutarse desde servidor y validar la jerarquía definida en `src/lib/auth/permissions.ts`.
+- Las operaciones de Personal usan la clave secreta solo en servidor y validan rol, cargo y tiendas.
+- La creación de usuarios privilegiados valida la jerarquía definida en `src/lib/auth/permissions.ts`.
 
-Consulta `docs/AUTHORIZATION.md` y `docs/DATABASE.md` antes de implementar los CRUD.
+Consulta `docs/AUTHORIZATION.md`, `docs/DATABASE.md` y `docs/PERSONAL.md` antes de ampliar los módulos.
