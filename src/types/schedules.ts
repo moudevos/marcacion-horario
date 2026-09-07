@@ -12,6 +12,7 @@ export type ScheduleStoreOption = {
 export type ScheduleEmployee = {
   id: string;
   fullName: string;
+  dni: string;
   position: EmployeePosition | null;
   workerType: WorkerType | null;
 };
