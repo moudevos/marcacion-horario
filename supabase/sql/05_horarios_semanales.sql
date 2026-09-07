@@ -86,6 +86,7 @@ begin
           updated_by = p_actor_id,
           updated_at = now()
       where employee_id = v_employee_id
+        and store_id = p_store_id
         and work_date = v_work_date
         and active = true;
       v_saved := v_saved + 1;
