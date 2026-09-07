@@ -1,9 +1,10 @@
-import { CalendarDays, Clock3, LayoutDashboard, LogOut, ScanLine, Users } from "lucide-react";
+import { Building2, CalendarDays, Clock3, LayoutDashboard, LogOut, ScanLine, Users } from "lucide-react";
 import Link from "next/link";
 
 const navigation = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/personal", label: "Personal", icon: Users },
+  { href: "/tiendas", label: "Tiendas", icon: Building2 },
   { href: "/horarios", label: "Horarios", icon: CalendarDays },
   { href: "/marcaciones", label: "Marcaciones", icon: ScanLine },
 ];
@@ -22,7 +23,7 @@ export function AppSidebar({ fullName, role, position }: { fullName: string; rol
           </div>
         </div>
 
-        <nav className="grid gap-1 sm:grid-cols-4 lg:grid-cols-1">
+        <nav className="grid gap-1 sm:grid-cols-5 lg:grid-cols-1">
           {navigation.map((item) => {
             const Icon = item.icon;
             return (
