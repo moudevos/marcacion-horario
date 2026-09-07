@@ -1,11 +1,19 @@
 import { PersonalClient } from "./personal-client";
 import { getPersonalModuleData } from "@/lib/personal/service";
+import type { PersonalModuleData } from "@/types/personal";
+
+async function loadPersonalData(): Promise<PersonalModuleData | null> {
+  try {
+    return await getPersonalModuleData();
+  } catch {
+    return null;
+  }
+}
 
 export default async function PersonalPage() {
-  try {
-    const data = await getPersonalModuleData();
-    return <PersonalClient initialData={data} />;
-  } catch {
+  const data = await loadPersonalData();
+
+  if (!data) {
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6">
         <h1 className="text-lg font-bold text-rose-900">No se pudo abrir el módulo de Personal</h1>
@@ -15,4 +23,6 @@ export default async function PersonalPage() {
       </div>
     );
   }
+
+  return <PersonalClient initialData={data} />;
 }

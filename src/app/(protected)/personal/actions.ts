@@ -71,6 +71,13 @@ function assertStoreScope(actor: StaffIdentity, storeIds: string[]) {
   }
 }
 
+function assertExistingTargetStoreScope(actor: StaffIdentity, storeIds: string[]) {
+  if (hasGlobalStoreScope(actor)) return;
+  if (storeIds.length === 0 || !storeIds.every((storeId) => actor.storeIds.includes(storeId))) {
+    throw new AuthorizationError("El usuario no pertenece completamente a tu alcance de tiendas");
+  }
+}
+
 async function assertStoresExist(admin: AdminClient, storeIds: string[]) {
   const uniqueIds = normalizeStoreIds(storeIds);
   if (uniqueIds.length === 0) return;
@@ -166,11 +173,7 @@ function assertCanManageTarget(
     return;
   }
 
-  if (!hasGlobalStoreScope(actor)) {
-    if (!snapshot.storeIds.every((storeId) => actor.storeIds.includes(storeId))) {
-      throw new AuthorizationError("El usuario tiene tiendas fuera de tu alcance");
-    }
-  }
+  assertExistingTargetStoreScope(actor, snapshot.storeIds);
 
   if (snapshot.role === null || snapshot.position === null) {
     if (actor.role !== "superuser") {
@@ -318,14 +321,14 @@ export async function togglePersonalActiveAction(input: unknown): Promise<Person
     const snapshot = await loadSnapshot(admin, parsedId.data);
 
     if (snapshot.id === actor.id) throw new AuthorizationError("No puedes desactivar tu propia cuenta");
+    assertPermission(actor, "personal", "update");
+    assertExistingTargetStoreScope(actor, snapshot.storeIds);
+
     if (!snapshot.role || !snapshot.position) {
       if (actor.role !== "superuser") throw new AuthorizationError("No puedes administrar este perfil");
     } else if (!canCreateStaff(actor, { role: snapshot.role, position: snapshot.position })) {
       throw new AuthorizationError("No puedes administrar este usuario");
     }
-
-    assertPermission(actor, "personal", "update");
-    assertStoreScope(actor, snapshot.storeIds);
 
     await saveDatabaseRecord(
       admin,
