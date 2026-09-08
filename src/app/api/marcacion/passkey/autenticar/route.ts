@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     await verifyPasskeyAuthentication({
       request,
       token: parsed.data.token,
-      response: parsed.data.response as AuthenticationResponseJSON,
+      response: parsed.data.response as unknown as AuthenticationResponseJSON,
     });
 
     return NextResponse.json(
