@@ -11,11 +11,11 @@ La confirmación final exige, en este orden lógico:
 3. horario activo del trabajador para la tienda;
 4. secuencia correcta de evento (`Ingreso`, `Salida a almuerzo`, `Retorno de almuerzo`, `Salida final`);
 5. Passkey WebAuthn válida con `userVerification: required`;
-6. firma de vida interactiva aleatoria;
+6. prueba de vida facial aleatoria con MediaPipe Face Landmarker;
 7. ubicación GPS dentro de la geocerca de la tienda;
 8. nueva validación transaccional en PostgreSQL justo antes de escribir la asistencia.
 
-## Passkeys y biometría local
+## Passkeys e identidad
 
 El sistema no almacena huellas, rostros, embeddings ni plantillas biométricas en Supabase.
 
@@ -27,7 +27,7 @@ WebAuthn permite que el autenticador local del dispositivo solicite Face ID, hue
 - transportes;
 - tipo de dispositivo y estado de respaldo cuando el autenticador los reporta.
 
-La autenticación usa `userVerification: required` y `requireUserVerification: true`.
+La autenticación usa `userVerification: required` y `requireUserVerification: true`. El trabajador no crea una contraseña propia del sistema de marcación.
 
 ## Primer enrolamiento
 
@@ -38,7 +38,7 @@ El flujo es:
 1. Supervisor/Admin abre `/marcaciones`;
 2. genera un código de enrolamiento de 8 dígitos para el trabajador;
 3. el código dura 10 minutos y sustituye cualquier código anterior pendiente del mismo trabajador;
-4. el trabajador abre `/marcacion` desde su propio dispositivo;
+4. el trabajador abre `/marcacion` desde su dispositivo;
 5. ingresa DNI + código temporal;
 6. el navegador crea la Passkey usando el autenticador local;
 7. el servidor verifica la ceremonia WebAuthn y guarda solo la credencial pública;
@@ -56,15 +56,35 @@ Cuando `break_minutes = 0`:
 
 La siguiente acción nunca se decide únicamente en el navegador. Se vuelve a resolver en PostgreSQL antes de escribir.
 
-## Firma de vida interactiva
+## Prueba de vida facial
 
-Cada sesión utiliza una acción diferente a la anterior cuando es posible:
+Desde el script 09 la firma manual fue sustituida por MediaPipe Face Landmarker ejecutado en el navegador.
 
-- mantener presionado durante aproximadamente 2 segundos;
-- pulsar tres veces;
-- escribir un código aleatorio de tres dígitos.
+Cada sesión recibe aleatoriamente uno de estos retos, evitando repetir el reto anterior cuando es posible:
 
-Esta prueba demuestra interacción activa con la sesión. No realiza análisis facial ni debe describirse como detección biométrica de vida.
+- doble parpadeo;
+- abrir la boca y mantenerla un instante;
+- levantar ambas cejas;
+- arrugar la nariz.
+
+El detector trabaja sobre una secuencia continua de frames. Para aceptar un reto exige:
+
+- exactamente un rostro visible;
+- varios frames neutrales antes del gesto;
+- transición desde estado neutral al gesto solicitado;
+- continuidad mínima del gesto;
+- dos transiciones separadas en el caso del doble parpadeo;
+- umbrales mínimos de los blendshapes relevantes.
+
+Si desaparece el rostro o aparece más de uno, la secuencia válida se reinicia.
+
+La aplicación no crea capturas, no sube video y no persiste landmarks. El evento final conserva únicamente una evidencia estructurada como motor, reto, duración, cantidad de frames válidos, transiciones y score máximo observado.
+
+MediaPipe procesa las imágenes de entrada en el dispositivo. El paquete y el modelo se descargan al navegador cuando son necesarios.
+
+### Límite de seguridad del navegador
+
+La prueba de vida local dificulta una fotografía estática y obliga a responder a un reto aleatorio, pero el servidor no recibe los frames y por lo tanto no puede verificar criptográficamente que el navegador ejecutó el modelo sin modificaciones. Por esa razón el liveness no se utiliza aislado: la marcación también exige Passkey válida, sesión efímera, horario correcto y geocerca. Si en el futuro se requiere resistencia fuerte contra clientes manipulados o deepfakes/replays avanzados, se deberá incorporar attestation de aplicación/dispositivo o un servicio de liveness verificado del lado servidor.
 
 ## Geocerca
 
@@ -119,20 +139,14 @@ La marcación administrativa exige motivo de al menos 5 caracteres, genera `atte
 
 El script 07 creó el bucket privado `attendance-evidence`. A partir del modelo del script 08, el flujo nuevo no sube fotografías y no utiliza ese bucket.
 
-No se elimina automáticamente el bucket en el script 08 para evitar destruir evidencias históricas que pudieran existir. Su eliminación/retención puede definirse posteriormente como una política de datos.
+No se elimina automáticamente el bucket para evitar destruir evidencias históricas que pudieran existir. Su eliminación/retención puede definirse posteriormente como una política de datos.
 
 ## SQL requerido
 
 Ejecutar manualmente, en orden:
 
 - `supabase/sql/07_motor_marcacion_publica.sql`;
-- `supabase/sql/08_passkeys_geocerca_y_marcacion_dashboard.sql`.
+- `supabase/sql/08_passkeys_geocerca_y_marcacion_dashboard.sql`;
+- `supabase/sql/09_liveness_facial_mediapipe.sql`.
 
-El script 08 agrega:
-
-- `stores.attendance_radius_meters`;
-- `employee_passkeys`;
-- `passkey_enrollment_tokens`;
-- estado WebAuthn/geocerca/firma de vida en `attendance_marking_sessions`;
-- `register_public_attendance_mark_v2`;
-- `register_admin_attendance_mark`.
+El script 09 no crea biometría persistente. Amplía los códigos permitidos de `attendance_marking_sessions.challenge_code` para los retos faciales utilizados por MediaPipe.
