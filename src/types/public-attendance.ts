@@ -1,11 +1,23 @@
 export type PublicAttendanceEvent = "check_in" | "break_out" | "break_in" | "check_out";
 
 export type PresenceChallengeCode =
-  | "blink"
+  | "blink_twice"
   | "mouth_open"
   | "brow_raise"
-  | "turn_left"
-  | "turn_right";
+  | "nose_sneer";
+
+export type FaceLivenessEvidence = {
+  engine: "mediapipe_face_landmarker";
+  engineVersion: "1.0.1";
+  challenge: PresenceChallengeCode;
+  durationMs: number;
+  processedFrames: number;
+  singleFaceFrames: number;
+  validFrames: number;
+  transitions: number;
+  peakScore: number;
+  completedAt: string;
+};
 
 export type PublicAttendanceSessionResponse = {
   token: string;
