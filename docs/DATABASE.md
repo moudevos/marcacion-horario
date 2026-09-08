@@ -20,7 +20,8 @@ Los scripts actuales son:
 4. `supabase/sql/04_modulo_tiendas.sql`;
 5. `supabase/sql/05_horarios_semanales.sql`;
 6. `supabase/sql/06_ubicacion_tiendas.sql`;
-7. `supabase/sql/07_motor_marcacion_publica.sql`.
+7. `supabase/sql/07_motor_marcacion_publica.sql`;
+8. `supabase/sql/08_passkeys_geocerca_y_marcacion_dashboard.sql`.
 
 ## `profiles`
 
@@ -34,11 +35,11 @@ Contiene el DNI asociado al colaborador. No se concede acceso directo a `anon` n
 
 ## `stores`
 
-Tiendas o puntos de trabajo. Además de código, nombre, dirección y estado, puede almacenar una ubicación geográfica WGS84 mediante `latitude` y `longitude`.
+Tiendas o puntos de trabajo. Además de código, nombre, dirección y estado, almacena opcionalmente ubicación WGS84 mediante `latitude` y `longitude`.
 
-Las coordenadas son opcionales para mantener compatibilidad con tiendas existentes, pero si se registra una debe registrarse también la otra. PostgreSQL valida latitud entre -90 y 90 y longitud entre -180 y 180.
+Las coordenadas deben existir como pareja. PostgreSQL valida latitud entre -90 y 90 y longitud entre -180 y 180.
 
-El CRUD permite escribir las coordenadas manualmente o seleccionar el punto en un mapa OpenStreetMap. Esta ubicación queda disponible para una futura validación de marcaciones por proximidad/geocerca; por ahora el motor público registra la posición del dispositivo como evidencia cuando está disponible, pero no rechaza por distancia.
+Desde el script 08 existe `attendance_radius_meters`, inicialmente 100 m y validado entre 20 y 1000 m. La marcación pública exige que la tienda tenga coordenadas y rechaza el autoservicio cuando el GPS del dispositivo está fuera de este radio.
 
 ## `user_store_assignments`
 
@@ -58,40 +59,65 @@ Estado consolidado de asistencia por colaborador y fecha. Desde el script 07 con
 - `check_out`: salida final;
 - estado y notas.
 
-La secuencia temporal se valida con una restricción PostgreSQL.
-
 ## `attendance_events`
 
-Historial de eventos de asistencia. Conserva la trazabilidad de ingreso, salida/retorno de almuerzo, salida final y correcciones. Las marcaciones públicas guardan en `metadata` la ruta privada de evidencia, reto de presencia y ubicación disponible.
+Historial de eventos de asistencia. Conserva ingreso, salida/retorno de almuerzo, salida final y correcciones.
+
+A partir del script 08 las nuevas marcaciones públicas ya no almacenan fotografías. La metadata conserva información de trazabilidad como tipo de marca, credencial pública utilizada, reto interactivo, distancia calculada y radio de tienda.
 
 ## `attendance_marking_sessions`
 
-Sesiones efímeras utilizadas por `/marcacion`. Cada sesión contiene únicamente el hash del token, trabajador, tienda, horario, fecha, evento esperado, reto aleatorio, expiración y estado de uso.
+Sesiones efímeras utilizadas por `/marcacion`. Contienen hash del token, trabajador, tienda, horario, fecha, evento esperado, reto, expiración y estado de uso.
 
-No tiene permisos directos para `anon` ni `authenticated`. La sesión expira a los dos minutos y se consume una sola vez.
+El script 08 agrega challenge WebAuthn y estados de validación de Passkey, firma de vida interactiva y geocerca. Al aplicar el script se invalidan las sesiones efímeras del motor 07 para evitar mezclar ambos protocolos.
+
+No se concede acceso directo a `anon` ni `authenticated`.
+
+## `employee_passkeys`
+
+Credenciales WebAuthn asociadas al trabajador. Almacena únicamente material criptográfico y metadatos necesarios para verificar una Passkey:
+
+- `credential_id`;
+- clave pública;
+- contador;
+- transportes;
+- tipo de dispositivo y estado de respaldo cuando están disponibles;
+- última utilización y revocación.
+
+No almacena huella, rostro, fotografía, embedding ni plantilla biométrica. La verificación local puede ser realizada por Face ID, huella, Windows Hello o PIN según el autenticador del dispositivo.
+
+## `passkey_enrollment_tokens`
+
+Autorizaciones temporales para registrar una nueva Passkey. El Supervisor/Admin genera un código desde `/marcaciones`; la base almacena solo su hash, challenge de registro, expiración y uso.
 
 ## `attendance_public_rate_limits`
 
-Control interno de intentos de la página pública. Las claves son hashes y no se expone la tabla al cliente.
+Control interno de intentos de la página pública. Las claves son hashes y no se exponen al cliente.
 
 ## Storage `attendance-evidence`
 
-Bucket privado creado por el script 07 para fotografías de evidencia de marcación. La aplicación no almacena el DNI en la ruta del objeto ni concede acceso directo desde la página pública.
+El script 07 creó un bucket privado para el primer diseño con fotografías. El motor del script 08 ya no escribe nuevas imágenes en este bucket.
 
-No se implementa comparación facial ni generación de plantillas biométricas automáticas.
+El bucket no se elimina automáticamente para no destruir posibles evidencias históricas generadas antes de la migración.
+
+## Marcación administrativa
+
+El script 08 agrega `register_admin_attendance_mark`. Se utiliza desde `/marcaciones` cuando un perfil autorizado necesita resolver una excepción operativa.
+
+La acción exige motivo, respeta alcance de tienda en la capa de servidor y crea tanto un `attendance_event` con origen administrativo como un registro de auditoría.
 
 ## `audit_logs`
 
-Base para auditoría administrativa.
+Base de auditoría administrativa.
 
 ## Política de escritura
 
-RLS habilita lectura por alcance, pero el esquema no concede mutaciones operativas directas a clientes autenticados. Personal, tiendas, horarios y correcciones de marcación deben pasar por Server Actions/Route Handlers que:
+RLS habilita lectura por alcance, pero el esquema no concede mutaciones operativas directas a clientes. Personal, tiendas, horarios y marcaciones pasan por Server Actions/Route Handlers que:
 
-1. validen sesión;
-2. resuelvan rol, cargo y tiendas;
-3. apliquen `src/lib/auth/require-permission.ts`;
-4. usen la clave secreta únicamente en servidor;
-5. escriban auditoría cuando corresponda.
+1. validan sesión cuando la operación es administrativa;
+2. resuelven rol, cargo y tiendas;
+3. aplican autorización de servidor;
+4. usan la clave secreta únicamente en servidor;
+5. escriben auditoría cuando corresponde.
 
-La ruta pública tampoco obtiene acceso SQL anónimo. La búsqueda de DNI, creación de sesiones, subida de evidencia y registro de eventos se realizan desde rutas de servidor y funciones accesibles únicamente con privilegios de servidor.
+La ruta pública tampoco obtiene acceso SQL anónimo. El motor público valida DNI, fecha/horario, Passkey, firma interactiva y geocerca antes de confirmar transaccionalmente la asistencia.
