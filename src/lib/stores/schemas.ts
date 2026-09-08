@@ -12,7 +12,7 @@ const storeFieldsSchema = z.object({
   address: z.string().trim().max(250, "La dirección admite como máximo 250 caracteres"),
   latitude: z.number().min(-90, "Latitud inválida").max(90, "Latitud inválida").nullable(),
   longitude: z.number().min(-180, "Longitud inválida").max(180, "Longitud inválida").nullable(),
-  attendanceRadiusMeters: z.number().int().min(20, "El radio mínimo es 20 m").max(1000, "El radio máximo es 1000 m"),
+  attendanceRadiusMeters: z.number().int().min(20, "El radio mínimo es 20 m").max(1000, "El radio máximo es 1000 m").default(100),
   active: z.boolean(),
 });
 
