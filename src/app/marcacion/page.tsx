@@ -1,4 +1,4 @@
-import { Clock3, Fingerprint, MapPin, ShieldCheck } from "lucide-react";
+import { Camera, Clock3, Fingerprint, MapPin, ShieldCheck } from "lucide-react";
 import { AttendanceForm } from "./attendance-form";
 
 export default function PublicAttendancePage() {
@@ -12,15 +12,16 @@ export default function PublicAttendancePage() {
           <p className="text-sm font-medium text-blue-300">Marcación de asistencia</p>
           <h1 className="mt-1 text-3xl font-semibold">Registra tu asistencia</h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
-            Ingresa tu DNI. Antes de confirmar se validarán horario, fecha, Passkey del dispositivo, firma de vida interactiva y ubicación de la tienda.
+            Ingresa tu DNI. Antes de confirmar se validarán horario, fecha, identidad del dispositivo, prueba de vida facial y ubicación de la tienda.
           </p>
         </div>
 
         <div className="p-7">
           <AttendanceForm />
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <Info icon={ShieldCheck} text="El DNI y la secuencia se procesan únicamente en servidor." />
-            <Info icon={Fingerprint} text="La Passkey puede usar biometría local, pero el servidor solo guarda una clave pública." />
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Info icon={ShieldCheck} text="DNI, horario y secuencia se procesan únicamente en servidor." />
+            <Info icon={Fingerprint} text="La Passkey valida identidad sin crear una contraseña del sistema." />
+            <Info icon={Camera} text="MediaPipe valida un gesto facial aleatorio sin guardar foto o video." />
             <Info icon={MapPin} text="La ubicación debe estar dentro de la geocerca configurada para la tienda." />
           </div>
         </div>
