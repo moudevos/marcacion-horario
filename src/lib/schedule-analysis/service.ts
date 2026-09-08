@@ -35,6 +35,8 @@ type RawAttendance = {
   employee_id: string;
   work_date: string;
   check_in: string | null;
+  break_out: string | null;
+  break_in: string | null;
   check_out: string | null;
   status: string;
 };
@@ -64,11 +66,22 @@ function plannedHours(schedule?: RawSchedule) {
   return round2(Math.max(0, grossMinutes - schedule.break_minutes) / 60);
 }
 
-function presenceHours(attendance?: RawAttendance) {
-  if (!attendance?.check_in || !attendance.check_out) return null;
-  const milliseconds = new Date(attendance.check_out).getTime() - new Date(attendance.check_in).getTime();
+function durationHours(start?: string | null, end?: string | null) {
+  if (!start || !end) return null;
+  const milliseconds = new Date(end).getTime() - new Date(start).getTime();
   if (!Number.isFinite(milliseconds) || milliseconds < 0) return null;
   return round2(milliseconds / 3_600_000);
+}
+
+function presenceHours(attendance?: RawAttendance) {
+  return durationHours(attendance?.check_in, attendance?.check_out);
+}
+
+function effectiveHours(schedule: RawSchedule | undefined, attendance: RawAttendance | undefined, presence: number | null) {
+  if (presence === null) return null;
+  const actualBreak = durationHours(attendance?.break_out, attendance?.break_in);
+  const breakHours = actualBreak ?? (schedule?.break_minutes ?? 0) / 60;
+  return round2(Math.max(0, presence - breakHours));
 }
 
 function resolveDayStatus(input: {
@@ -77,7 +90,9 @@ function resolveDayStatus(input: {
   varianceHours: number | null;
 }): AnalysisDayStatus {
   const { hasSchedule, attendance, varianceHours } = input;
-  const hasAnyMark = Boolean(attendance?.check_in || attendance?.check_out);
+  const hasAnyMark = Boolean(
+    attendance?.check_in || attendance?.break_out || attendance?.break_in || attendance?.check_out,
+  );
   const hasCompleteMark = Boolean(attendance?.check_in && attendance?.check_out);
 
   if (!hasSchedule && !hasAnyMark) return "off";
@@ -93,9 +108,7 @@ function resolveDayStatus(input: {
 function buildDay(date: string, schedule?: RawSchedule, attendance?: RawAttendance): ScheduleAnalysisDay {
   const planned = plannedHours(schedule);
   const presence = presenceHours(attendance);
-  const effective = presence === null
-    ? null
-    : round2(Math.max(0, presence - (schedule?.break_minutes ?? 0) / 60));
+  const effective = effectiveHours(schedule, attendance, presence);
   const variance = effective === null ? null : round2(effective - planned);
   const status = resolveDayStatus({
     hasSchedule: Boolean(schedule),
@@ -188,7 +201,7 @@ export async function getScheduleAnalysisModuleData(input?: {
       .lte("work_date", weekEnd),
     admin
       .from("attendance_records")
-      .select("employee_id, work_date, check_in, check_out, status")
+      .select("employee_id, work_date, check_in, break_out, break_in, check_out, status")
       .eq("store_id", selectedStoreId)
       .gte("work_date", weekStart)
       .lte("work_date", weekEnd),
