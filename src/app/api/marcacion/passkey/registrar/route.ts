@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       request,
       dni: parsed.data.dni,
       enrollmentCode: parsed.data.enrollmentCode,
-      response: parsed.data.response as RegistrationResponseJSON,
+      response: parsed.data.response as unknown as RegistrationResponseJSON,
     });
 
     return NextResponse.json(
