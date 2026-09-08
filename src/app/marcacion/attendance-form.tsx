@@ -1,10 +1,12 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import {
-  Camera,
   CheckCircle2,
   Clock3,
+  Fingerprint,
+  KeyRound,
   Loader2,
   MapPin,
   RefreshCcw,
@@ -13,7 +15,7 @@ import {
   Store,
   UserRound,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import Swal from "sweetalert2";
 import { z } from "zod";
@@ -31,7 +33,7 @@ type AttendanceInput = z.infer<typeof attendanceSchema>;
 type Coordinates = {
   latitude: number;
   longitude: number;
-} | null;
+};
 
 const POSITION_LABELS: Record<string, string> = {
   zonal: "Zonal",
@@ -42,31 +44,32 @@ const POSITION_LABELS: Record<string, string> = {
 };
 
 function getCoordinates(): Promise<Coordinates> {
-  if (typeof navigator === "undefined" || !navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Este dispositivo no permite obtener ubicación"));
+      return;
+    }
 
-  return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-      },
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
+      (position) => resolve({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      }),
+      () => reject(new Error("Debes permitir la ubicación para registrar asistencia")),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 },
     );
   });
 }
 
 export function AttendanceForm() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const holdStartedAt = useRef<number | null>(null);
   const [session, setSession] = useState<PublicAttendanceSessionResponse | null>(null);
-  const [capturedPhoto, setCapturedPhoto] = useState<Blob | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [dni, setDni] = useState("");
+  const [enrollmentCode, setEnrollmentCode] = useState("");
+  const [passkeyVerified, setPasskeyVerified] = useState(false);
+  const [livenessResponse, setLivenessResponse] = useState("");
+  const [tapCount, setTapCount] = useState(0);
+  const [isWorking, setIsWorking] = useState(false);
   const [result, setResult] = useState<PublicAttendanceRegisterResult | null>(null);
 
   const {
@@ -76,56 +79,12 @@ export function AttendanceForm() {
     formState: { errors, isSubmitting },
   } = useForm<AttendanceInput>({ resolver: zodResolver(attendanceSchema) });
 
-  useEffect(() => {
-    if (!session || result) return;
-    let cancelled = false;
-
-    async function startCamera() {
-      try {
-        setCameraError(null);
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Este dispositivo o navegador no permite usar la cámara");
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 720 } },
-          audio: false,
-        });
-
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch (error) {
-        setCameraError(error instanceof Error ? error.message : "No se pudo iniciar la cámara");
-      }
-    }
-
-    void startCamera();
-
-    return () => {
-      cancelled = true;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    };
-  }, [session, result]);
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
-
   async function onSubmit(values: AttendanceInput) {
     setResult(null);
-    setCapturedPhoto(null);
-    setPreviewUrl(null);
+    setPasskeyVerified(false);
+    setLivenessResponse("");
+    setTapCount(0);
+    setDni(values.dni);
 
     const response = await fetch("/api/marcacion/iniciar", {
       method: "POST",
@@ -150,89 +109,151 @@ export function AttendanceForm() {
     setSession(payload.session);
   }
 
-  function capturePhoto() {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2) {
-      void Swal.fire({ icon: "warning", title: "Cámara no disponible", text: "Espera a que la cámara termine de iniciar." });
-      return;
+  async function enrollPasskey() {
+    if (!session || !/^\d{8}$/.test(enrollmentCode) || isWorking) return;
+    setIsWorking(true);
+
+    try {
+      const optionsResponse = await fetch("/api/marcacion/passkey/registro-opciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dni, enrollmentCode }),
+      });
+      const optionsPayload = await optionsResponse.json() as { ok: boolean; message?: string; options?: Parameters<typeof startRegistration>[0]["optionsJSON"] };
+      if (!optionsResponse.ok || !optionsPayload.ok || !optionsPayload.options) {
+        throw new Error(optionsPayload.message ?? "No se pudo iniciar el enrolamiento");
+      }
+
+      const credential = await startRegistration({ optionsJSON: optionsPayload.options });
+      const verifyResponse = await fetch("/api/marcacion/passkey/registrar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dni, enrollmentCode, response: credential }),
+      });
+      const verifyPayload = await verifyResponse.json() as { ok: boolean; message?: string };
+      if (!verifyResponse.ok || !verifyPayload.ok) {
+        throw new Error(verifyPayload.message ?? "No se pudo guardar la Passkey");
+      }
+
+      await Swal.fire({
+        icon: "success",
+        title: "Dispositivo enrolado",
+        text: "La Passkey quedó asociada. Inicia nuevamente la marcación para validarla.",
+      });
+      startAgain();
+    } catch (error) {
+      await Swal.fire({
+        icon: "error",
+        title: "No se pudo enrolar",
+        text: error instanceof Error ? error.message : "Error al registrar la Passkey",
+      });
+    } finally {
+      setIsWorking(false);
     }
-
-    const sourceWidth = video.videoWidth || 640;
-    const sourceHeight = video.videoHeight || 480;
-    const targetWidth = Math.min(720, sourceWidth);
-    const targetHeight = Math.round((sourceHeight / sourceWidth) * targetWidth);
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    context.drawImage(video, 0, 0, targetWidth, targetHeight);
-
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) return;
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        setCapturedPhoto(blob);
-        setPreviewUrl(URL.createObjectURL(blob));
-      },
-      "image/jpeg",
-      0.86,
-    );
   }
 
-  function retakePhoto() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setCapturedPhoto(null);
-    setPreviewUrl(null);
+  async function validatePasskey() {
+    if (!session || isWorking) return;
+    setIsWorking(true);
+
+    try {
+      const optionsResponse = await fetch("/api/marcacion/passkey/autenticacion-opciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: session.token }),
+      });
+      const optionsPayload = await optionsResponse.json() as { ok: boolean; message?: string; options?: Parameters<typeof startAuthentication>[0]["optionsJSON"] };
+      if (!optionsResponse.ok || !optionsPayload.ok || !optionsPayload.options) {
+        throw new Error(optionsPayload.message ?? "No se pudo iniciar la validación del dispositivo");
+      }
+
+      const credential = await startAuthentication({ optionsJSON: optionsPayload.options });
+      const verifyResponse = await fetch("/api/marcacion/passkey/autenticar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: session.token, response: credential }),
+      });
+      const verifyPayload = await verifyResponse.json() as { ok: boolean; message?: string };
+      if (!verifyResponse.ok || !verifyPayload.ok) {
+        throw new Error(verifyPayload.message ?? "No se pudo validar la Passkey");
+      }
+
+      setPasskeyVerified(true);
+    } catch (error) {
+      await Swal.fire({
+        icon: "error",
+        title: "Validación fallida",
+        text: error instanceof Error ? error.message : "No se pudo validar el dispositivo",
+      });
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  function handleLivenessTap() {
+    if (!session || session.challenge.code !== "tap_3") return;
+    const next = tapCount + 1;
+    setTapCount(next);
+    if (next >= 3) setLivenessResponse("tap_3");
+  }
+
+  function beginHold() {
+    holdStartedAt.current = Date.now();
+  }
+
+  function finishHold() {
+    if (!session || session.challenge.code !== "hold_2s" || holdStartedAt.current === null) return;
+    const duration = Date.now() - holdStartedAt.current;
+    holdStartedAt.current = null;
+    if (duration >= 1800) {
+      setLivenessResponse("held_2s");
+    } else {
+      void Swal.fire({ icon: "info", title: "Mantén presionado", text: "Debes mantener el botón durante aproximadamente 2 segundos." });
+    }
   }
 
   async function registerMark() {
-    if (!session || !capturedPhoto || isRegistering) return;
-    setIsRegistering(true);
+    if (!session || !passkeyVerified || !livenessResponse || isWorking) return;
+    setIsWorking(true);
 
     try {
       const coordinates = await getCoordinates();
-      const formData = new FormData();
-      formData.append("token", session.token);
-      formData.append("photo", capturedPhoto, "evidencia.jpg");
-      if (coordinates) {
-        formData.append("latitude", String(coordinates.latitude));
-        formData.append("longitude", String(coordinates.longitude));
-      }
-
       const response = await fetch("/api/marcacion/registrar", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: session.token,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          livenessResponse,
+        }),
       });
-      const payload = (await response.json()) as PublicAttendanceRegisterResult;
+      const payload = await response.json() as PublicAttendanceRegisterResult;
 
       if (!response.ok || !payload.ok) {
-        await Swal.fire({
-          icon: "error",
-          title: "No se pudo registrar",
-          text: payload.message ?? "Inicia nuevamente el proceso de marcación.",
-        });
-        return;
+        throw new Error(payload.message ?? "No se pudo registrar la asistencia");
       }
 
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
       setResult(payload);
+    } catch (error) {
+      await Swal.fire({
+        icon: "error",
+        title: "No se pudo registrar",
+        text: error instanceof Error ? error.message : "Inicia nuevamente el proceso de marcación.",
+      });
     } finally {
-      setIsRegistering(false);
+      setIsWorking(false);
     }
   }
 
   function startAgain() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(null);
-    setCapturedPhoto(null);
     setSession(null);
     setResult(null);
-    setCameraError(null);
+    setEnrollmentCode("");
+    setPasskeyVerified(false);
+    setLivenessResponse("");
+    setTapCount(0);
+    setDni("");
     reset();
   }
 
@@ -254,13 +275,12 @@ export function AttendanceForm() {
               }).format(new Date(result.occurredAt))}
             </p>
           )}
+          {typeof result.distanceMeters === "number" && (
+            <p className="mt-1 text-xs text-emerald-700">Ubicación validada a {Math.round(result.distanceMeters)} m de la tienda</p>
+          )}
         </div>
 
-        <button
-          type="button"
-          onClick={startAgain}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white transition hover:bg-slate-800"
-        >
+        <button type="button" onClick={startAgain} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white hover:bg-slate-800">
           <RefreshCcw className="h-4 w-4" />
           Nueva marcación
         </button>
@@ -276,9 +296,7 @@ export function AttendanceForm() {
             <div className="rounded-xl bg-white p-2 text-blue-700"><UserRound className="h-5 w-5" /></div>
             <div className="min-w-0">
               <p className="font-bold text-slate-950">{session.employee.fullName}</p>
-              <p className="mt-0.5 text-xs text-slate-600">
-                {session.employee.position ? POSITION_LABELS[session.employee.position] ?? session.employee.position : "Trabajador"}
-              </p>
+              <p className="mt-0.5 text-xs text-slate-600">{session.employee.position ? POSITION_LABELS[session.employee.position] ?? session.employee.position : "Trabajador"}</p>
             </div>
           </div>
 
@@ -293,57 +311,100 @@ export function AttendanceForm() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Reto de presencia</p>
-          <p className="mt-2 font-semibold leading-6 text-amber-950">{session.challenge.label}</p>
-          <p className="mt-2 text-xs leading-5 text-amber-800">
-            Realiza la acción y luego captura la evidencia. El sistema no compara rostros ni crea una plantilla biométrica automática.
-          </p>
-        </section>
-
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
-          <div className="relative aspect-[4/3] w-full bg-black">
-            <video ref={videoRef} muted playsInline autoPlay className="h-full w-full object-cover" />
-            {previewUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="Evidencia capturada" className="absolute inset-0 h-full w-full object-cover" />
+        {!session.passkeyConfigured ? (
+          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-center gap-2 text-amber-900">
+              <KeyRound className="h-5 w-5" />
+              <h2 className="font-bold">Primer enrolamiento del dispositivo</h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-amber-900">
+              Solicita al Supervisor/Admin un código temporal desde Marcaciones. El dispositivo guardará una Passkey; el servidor no recibe huella ni rostro.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <input
+                value={enrollmentCode}
+                onChange={(event) => setEnrollmentCode(event.target.value.replace(/\D/g, "").slice(0, 8))}
+                inputMode="numeric"
+                placeholder="Código de 8 dígitos"
+                className="min-w-0 flex-1 rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm tracking-widest outline-none focus:border-amber-500"
+              />
+              <button type="button" onClick={enrollPasskey} disabled={!/^\d{8}$/.test(enrollmentCode) || isWorking} className="rounded-xl bg-amber-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                Enrolar
+              </button>
+            </div>
+          </section>
+        ) : (
+          <section className={`rounded-2xl border p-4 ${passkeyVerified ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+            <div className="flex items-center gap-2">
+              <Fingerprint className={`h-5 w-5 ${passkeyVerified ? "text-emerald-700" : "text-blue-700"}`} />
+              <h2 className="font-bold text-slate-950">Validación del dispositivo</h2>
+            </div>
+            <p className="mt-2 text-sm text-slate-600">
+              {passkeyVerified ? "Passkey validada correctamente." : "Usa la Passkey registrada. El dispositivo puede solicitar huella, Face ID, Windows Hello o PIN local."}
+            </p>
+            {!passkeyVerified && (
+              <button type="button" onClick={validatePasskey} disabled={isWorking} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                {isWorking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
+                Validar Passkey
+              </button>
             )}
-            {cameraError && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-950 p-6 text-center text-sm text-white">
-                {cameraError}. Habilita el permiso de cámara y vuelve a iniciar.
+          </section>
+        )}
+
+        {session.passkeyConfigured && passkeyVerified && (
+          <section className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Firma de vida interactiva</p>
+            <p className="mt-2 font-semibold leading-6 text-violet-950">{session.challenge.label}</p>
+
+            {session.challenge.code === "hold_2s" && (
+              <button
+                type="button"
+                onPointerDown={beginHold}
+                onPointerUp={finishHold}
+                onPointerCancel={() => { holdStartedAt.current = null; }}
+                className={`mt-4 w-full rounded-xl px-4 py-3 text-sm font-semibold ${livenessResponse ? "bg-emerald-600 text-white" : "bg-violet-700 text-white"}`}
+              >
+                {livenessResponse ? "Firma completada" : "Mantener presionado"}
+              </button>
+            )}
+
+            {session.challenge.code === "tap_3" && (
+              <button type="button" onClick={handleLivenessTap} className={`mt-4 w-full rounded-xl px-4 py-3 text-sm font-semibold ${livenessResponse ? "bg-emerald-600 text-white" : "bg-violet-700 text-white"}`}>
+                {livenessResponse ? "Firma completada" : `Pulsar (${tapCount}/3)`}
+              </button>
+            )}
+
+            {session.challenge.code === "type_code" && (
+              <input
+                value={livenessResponse}
+                onChange={(event) => setLivenessResponse(event.target.value.replace(/\D/g, "").slice(0, 3))}
+                inputMode="numeric"
+                placeholder="Escribe el código"
+                className="mt-4 w-full rounded-xl border border-violet-300 bg-white px-4 py-3 text-center text-lg font-bold tracking-[0.35em] outline-none focus:border-violet-500"
+              />
+            )}
+          </section>
+        )}
+
+        {session.passkeyConfigured && passkeyVerified && livenessResponse && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-start gap-3">
+              <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+              <div>
+                <p className="font-bold text-slate-950">Validación de ubicación</p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Al confirmar se solicitará GPS preciso. La marcación debe estar dentro de {session.store.attendanceRadiusMeters} m del punto configurado para la tienda.
+                </p>
               </div>
-            )}
-          </div>
-          <canvas ref={canvasRef} className="hidden" />
-
-          <div className="grid gap-2 bg-white p-4 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={previewUrl ? retakePhoto : capturePhoto}
-              disabled={Boolean(cameraError) || isRegistering}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {previewUrl ? <RefreshCcw className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
-              {previewUrl ? "Repetir foto" : "Capturar evidencia"}
+            </div>
+            <button type="button" onClick={registerMark} disabled={isWorking} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+              {isWorking ? <Loader2 className="h-5 w-5 animate-spin" /> : <ScanLine className="h-5 w-5" />}
+              Confirmar {session.nextEventLabel}
             </button>
-            <button
-              type="button"
-              onClick={registerMark}
-              disabled={!capturedPhoto || isRegistering}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isRegistering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
-              Registrar {session.nextEventLabel}
-            </button>
-          </div>
-        </section>
+          </section>
+        )}
 
-        <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
-          Al confirmar se intentará adjuntar la ubicación del dispositivo como evidencia adicional. La foto se almacena en un bucket privado.
-        </div>
-
-        <button type="button" onClick={startAgain} disabled={isRegistering} className="w-full text-sm font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-50">
+        <button type="button" onClick={startAgain} disabled={isWorking} className="w-full text-sm font-semibold text-slate-500 hover:text-slate-800 disabled:opacity-50">
           Cancelar y volver al DNI
         </button>
       </div>
@@ -353,9 +414,7 @@ export function AttendanceForm() {
   return (
     <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
       <div>
-        <label className="mb-2 block text-sm font-semibold text-slate-800" htmlFor="dni">
-          DNI
-        </label>
+        <label className="mb-2 block text-sm font-semibold text-slate-800" htmlFor="dni">DNI</label>
         <input
           id="dni"
           inputMode="numeric"
@@ -368,18 +427,14 @@ export function AttendanceForm() {
         {errors.dni && <p className="mt-1 text-xs text-red-600">{errors.dni.message}</p>}
       </div>
 
-      <button
-        type="submit"
-        disabled={isSubmitting}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
-      >
+      <button type="submit" disabled={isSubmitting} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-60">
         {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <ScanLine className="h-5 w-5" />}
         Continuar
       </button>
 
       <div className="flex gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
         <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-        <p>El DNI se valida únicamente en servidor. Los intentos se limitan para reducir enumeración y abuso de esta página pública.</p>
+        <p>DNI, horario, fecha, Passkey, firma de vida interactiva y geocerca se validan antes de escribir la asistencia.</p>
       </div>
     </form>
   );
