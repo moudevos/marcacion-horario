@@ -1,4 +1,4 @@
-import { Camera, Clock3, ShieldCheck } from "lucide-react";
+import { Clock3, Fingerprint, MapPin, ShieldCheck } from "lucide-react";
 import { AttendanceForm } from "./attendance-form";
 
 export default function PublicAttendancePage() {
@@ -12,24 +12,28 @@ export default function PublicAttendancePage() {
           <p className="text-sm font-medium text-blue-300">Marcación de asistencia</p>
           <h1 className="mt-1 text-3xl font-semibold">Registra tu asistencia</h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
-            Ingresa tu DNI. El sistema identificará tu horario y la próxima acción de la jornada antes de solicitar la evidencia desde la cámara.
+            Ingresa tu DNI. Antes de confirmar se validarán horario, fecha, Passkey del dispositivo, firma de vida interactiva y ubicación de la tienda.
           </p>
         </div>
 
         <div className="p-7">
           <AttendanceForm />
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            <div className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-              <p>La página pública no tiene acceso directo a las tablas operativas. DNI, secuencia y guardado se validan nuevamente en servidor.</p>
-            </div>
-            <div className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
-              <Camera className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
-              <p>La cámara genera evidencia privada de presencia. No se realiza reconocimiento facial automático ni comparación biométrica.</p>
-            </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-3">
+            <Info icon={ShieldCheck} text="El DNI y la secuencia se procesan únicamente en servidor." />
+            <Info icon={Fingerprint} text="La Passkey puede usar biometría local, pero el servidor solo guarda una clave pública." />
+            <Info icon={MapPin} text="La ubicación debe estar dentro de la geocerca configurada para la tienda." />
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+function Info({ icon: Icon, text }: { icon: typeof ShieldCheck; text: string }) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+      <Icon className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
+      <p>{text}</p>
+    </div>
   );
 }
