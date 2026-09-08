@@ -6,8 +6,12 @@
 -- Este script NO implementa reconocimiento facial ni comparación biométrica automática.
 -- La cámara se usa para evidencia privada y un reto aleatorio de presencia.
 
-alter type public.attendance_event_type add value if not exists 'break_out';
-alter type public.attendance_event_type add value if not exists 'break_in';
+create type public.attendance_mark_type as enum (
+  'check_in',
+  'break_out',
+  'break_in',
+  'check_out'
+);
 
 alter table public.attendance_records
   add column if not exists break_out timestamptz,
@@ -27,33 +31,31 @@ alter table public.attendance_records
 create index if not exists attendance_records_employee_work_date_idx
   on public.attendance_records(employee_id, work_date);
 
-create table if not exists public.attendance_marking_sessions (
+create table public.attendance_marking_sessions (
   id uuid primary key default gen_random_uuid(),
   token_hash text not null unique,
   employee_id uuid not null references public.profiles(id),
   store_id uuid not null references public.stores(id),
   schedule_id uuid not null references public.schedules(id),
   work_date date not null,
-  expected_event public.attendance_event_type not null,
+  expected_event public.attendance_mark_type not null,
   challenge_code text not null,
   request_fingerprint_hash text,
   expires_at timestamptz not null,
   used_at timestamptz,
   created_at timestamptz not null default now(),
-  constraint attendance_marking_sessions_event_check
-    check (expected_event in ('check_in', 'break_out', 'break_in', 'check_out')),
   constraint attendance_marking_sessions_challenge_check
     check (challenge_code in ('turn_left', 'turn_right', 'hand_open', 'two_fingers'))
 );
 
-create index if not exists attendance_marking_sessions_employee_date_idx
+create index attendance_marking_sessions_employee_date_idx
   on public.attendance_marking_sessions(employee_id, work_date, created_at desc);
 
-create index if not exists attendance_marking_sessions_expiry_idx
+create index attendance_marking_sessions_expiry_idx
   on public.attendance_marking_sessions(expires_at)
   where used_at is null;
 
-create table if not exists public.attendance_public_rate_limits (
+create table public.attendance_public_rate_limits (
   rate_key text primary key,
   window_started_at timestamptz not null default now(),
   attempts integer not null default 0,
@@ -154,7 +156,8 @@ declare
   v_session public.attendance_marking_sessions%rowtype;
   v_schedule public.schedules%rowtype;
   v_attendance public.attendance_records%rowtype;
-  v_expected public.attendance_event_type;
+  v_expected public.attendance_mark_type;
+  v_history_event public.attendance_event_type;
   v_status public.attendance_status;
   v_now timestamptz := now();
   v_local_time time;
@@ -295,6 +298,14 @@ begin
 
   v_attendance_id := v_attendance.id;
 
+  if v_expected = 'check_in' then
+    v_history_event := 'check_in';
+  elsif v_expected = 'check_out' then
+    v_history_event := 'check_out';
+  else
+    v_history_event := 'manual_adjustment';
+  end if;
+
   insert into public.attendance_events (
     attendance_id,
     employee_id,
@@ -308,10 +319,11 @@ begin
     v_attendance_id,
     v_session.employee_id,
     v_session.store_id,
-    v_expected,
+    v_history_event,
     v_now,
     'public_dni',
     coalesce(p_metadata, '{}'::jsonb) || jsonb_build_object(
+      'mark_type', v_expected,
       'evidence_path', p_evidence_path,
       'challenge_code', v_session.challenge_code,
       'latitude', p_latitude,
@@ -343,6 +355,9 @@ from public, anon, authenticated;
 
 grant execute on function public.register_public_attendance_mark(uuid, text, text, numeric, numeric, jsonb)
 to service_role;
+
+comment on type public.attendance_mark_type
+is 'Secuencia funcional de marcación pública: ingreso, salida/retorno de almuerzo y salida final.';
 
 comment on table public.attendance_marking_sessions
 is 'Sesiones efímeras para la marcación pública. No expuestas a clientes.';
