@@ -15,18 +15,18 @@ const EVENT_LABELS: Record<PublicAttendanceEvent, string> = {
   check_out: "Salida final",
 };
 
+const LIVENESS_CHALLENGES: Array<{ code: PresenceChallengeCode; label: string }> = [
+  { code: "blink_twice", label: "Mira al frente y parpadea dos veces de forma natural." },
+  { code: "mouth_open", label: "Mira al frente, abre la boca y mantenla abierta un instante." },
+  { code: "brow_raise", label: "Mira al frente y levanta ambas cejas durante un instante." },
+  { code: "nose_sneer", label: "Mira al frente y arruga la nariz durante un instante." },
+];
+
 type RawAttendance = {
   check_in: string | null;
   break_out: string | null;
   break_in: string | null;
   check_out: string | null;
-};
-
-type ChallengeDefinition = {
-  code: PresenceChallengeCode;
-  label: string;
-  value: string;
-  publicValue?: string;
 };
 
 function limaWorkDate() {
@@ -56,31 +56,9 @@ function resolveNextEvent(attendance: RawAttendance | null, breakMinutes: number
   return null;
 }
 
-function chooseChallenge(previousCode?: string | null): ChallengeDefinition {
-  const definitions: ChallengeDefinition[] = [
-    {
-      code: "hold_2s",
-      label: "Mantén presionado el botón de firma de vida durante 2 segundos.",
-      value: "held_2s",
-    },
-    {
-      code: "tap_3",
-      label: "Pulsa tres veces el botón de firma de vida.",
-      value: "tap_3",
-    },
-    (() => {
-      const code = String(randomInt(100, 1000));
-      return {
-        code: "type_code" as const,
-        label: `Escribe el código ${code} para completar la firma de vida.`,
-        value: code,
-        publicValue: code,
-      };
-    })(),
-  ];
-
-  const options = definitions.filter((challenge) => challenge.code !== previousCode);
-  const source = options.length > 0 ? options : definitions;
+function chooseChallenge(previousCode?: string | null) {
+  const options = LIVENESS_CHALLENGES.filter((challenge) => challenge.code !== previousCode);
+  const source = options.length > 0 ? options : LIVENESS_CHALLENGES;
   return source[randomInt(source.length)]!;
 }
 
@@ -186,7 +164,7 @@ export async function createPublicAttendanceSession(input: {
 
   const token = randomBytes(32).toString("hex");
   const tokenHash = hashPublicValue(token);
-  const expiresAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
   const { error: sessionError } = await admin.from("attendance_marking_sessions").insert({
     token_hash: tokenHash,
@@ -196,7 +174,7 @@ export async function createPublicAttendanceSession(input: {
     work_date: workDate,
     expected_event: nextEvent,
     challenge_code: challenge.code,
-    liveness_value: challenge.value,
+    liveness_value: challenge.code,
     request_fingerprint_hash: input.requestFingerprintHash ?? null,
     expires_at: expiresAt,
   });
@@ -226,10 +204,6 @@ export async function createPublicAttendanceSession(input: {
     passkeyConfigured: (passkeyCount ?? 0) > 0,
     nextEvent,
     nextEventLabel: EVENT_LABELS[nextEvent],
-    challenge: {
-      code: challenge.code,
-      label: challenge.label,
-      publicValue: challenge.publicValue,
-    },
+    challenge,
   };
 }
