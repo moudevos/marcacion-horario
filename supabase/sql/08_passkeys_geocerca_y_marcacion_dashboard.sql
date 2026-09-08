@@ -69,6 +69,10 @@ alter table public.attendance_marking_sessions
   add column if not exists location_verified_at timestamptz,
   add column if not exists location_distance_meters numeric;
 
+-- Las sesiones son efímeras. Se invalidan al migrar desde el motor 07 para
+-- evitar que un challenge antiguo pueda sobrevivir al nuevo modelo.
+delete from public.attendance_marking_sessions;
+
 alter table public.attendance_marking_sessions
   drop constraint if exists attendance_marking_sessions_challenge_check;
 
@@ -319,6 +323,10 @@ from public, anon, authenticated;
 
 grant execute on function public.register_public_attendance_mark_v2(uuid, text, numeric, numeric, jsonb)
 to service_role;
+
+-- La función del motor 07 queda inutilizable para el backend después de migrar.
+revoke execute on function public.register_public_attendance_mark(uuid, text, text, numeric, numeric, jsonb)
+from service_role;
 
 create or replace function public.register_admin_attendance_mark(
   p_employee_id uuid,
