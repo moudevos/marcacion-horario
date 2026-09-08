@@ -15,6 +15,7 @@ type StoreSnapshot = {
   address: string | null;
   latitude: number | null;
   longitude: number | null;
+  attendance_radius_meters: number;
   active: boolean;
 };
 
@@ -39,7 +40,7 @@ function formatError(error: unknown) {
 async function loadStore(admin: AdminClient, id: string): Promise<StoreSnapshot> {
   const { data, error } = await admin
     .from("stores")
-    .select("id, code, name, address, latitude, longitude, active")
+    .select("id, code, name, address, latitude, longitude, attendance_radius_meters, active")
     .eq("id", id)
     .single();
 
@@ -56,6 +57,7 @@ async function saveStore(
     address: string;
     latitude: number | null;
     longitude: number | null;
+    attendanceRadiusMeters?: number;
     active: boolean;
     actorId: string;
     assignActor: boolean;
@@ -78,6 +80,23 @@ async function saveStore(
   if (error) {
     if (error.code === "23505") throw new Error("Ya existe una tienda con ese código");
     throw new Error(error.message);
+  }
+
+  if (typeof data.attendanceRadiusMeters === "number") {
+    const { error: radiusError } = await admin
+      .from("stores")
+      .update({ attendance_radius_meters: data.attendanceRadiusMeters })
+      .eq("id", storeId as string);
+    if (radiusError) throw new Error(radiusError.message);
+
+    const { error: auditError } = await admin.from("audit_logs").insert({
+      actor_id: data.actorId,
+      action: `${data.auditAction}.geofence`,
+      entity_type: "store",
+      entity_id: storeId as string,
+      payload: { attendance_radius_meters: data.attendanceRadiusMeters },
+    });
+    if (auditError) throw new Error(auditError.message);
   }
 
   return storeId as string;
@@ -103,6 +122,7 @@ export async function createStoreAction(input: unknown): Promise<StoreActionResu
       address: data.address,
       latitude: data.latitude,
       longitude: data.longitude,
+      attendanceRadiusMeters: data.attendanceRadiusMeters,
       active: data.active,
       actorId: actor.id,
       assignActor,
@@ -112,6 +132,7 @@ export async function createStoreAction(input: unknown): Promise<StoreActionResu
     revalidatePath("/tiendas");
     revalidatePath("/personal");
     revalidatePath("/horarios");
+    revalidatePath("/marcaciones");
     return success("Tienda creada correctamente");
   } catch (error) {
     return failure(formatError(error));
@@ -138,6 +159,7 @@ export async function updateStoreAction(input: unknown): Promise<StoreActionResu
       address: data.address,
       latitude: data.latitude,
       longitude: data.longitude,
+      attendanceRadiusMeters: data.attendanceRadiusMeters,
       active: snapshot.active,
       actorId: actor.id,
       assignActor: false,
@@ -147,6 +169,7 @@ export async function updateStoreAction(input: unknown): Promise<StoreActionResu
     revalidatePath("/tiendas");
     revalidatePath("/personal");
     revalidatePath("/horarios");
+    revalidatePath("/marcaciones");
     return success("Tienda actualizada correctamente");
   } catch (error) {
     return failure(formatError(error));
@@ -179,6 +202,7 @@ export async function toggleStoreActiveAction(input: unknown): Promise<StoreActi
 
     revalidatePath("/tiendas");
     revalidatePath("/horarios");
+    revalidatePath("/marcaciones");
     return success(snapshot.active ? "Tienda desactivada" : "Tienda reactivada");
   } catch (error) {
     return failure(formatError(error));
@@ -208,6 +232,7 @@ export async function deleteStoreAction(input: unknown): Promise<StoreActionResu
     revalidatePath("/tiendas");
     revalidatePath("/personal");
     revalidatePath("/horarios");
+    revalidatePath("/marcaciones");
     return success("Tienda eliminada definitivamente");
   } catch (error) {
     return failure(formatError(error));
