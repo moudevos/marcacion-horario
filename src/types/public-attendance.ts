@@ -1,6 +1,11 @@
 export type PublicAttendanceEvent = "check_in" | "break_out" | "break_in" | "check_out";
 
-export type PresenceChallengeCode = "hold_2s" | "tap_3" | "type_code";
+export type PresenceChallengeCode =
+  | "blink"
+  | "mouth_open"
+  | "brow_raise"
+  | "turn_left"
+  | "turn_right";
 
 export type PublicAttendanceSessionResponse = {
   token: string;
@@ -28,7 +33,6 @@ export type PublicAttendanceSessionResponse = {
   challenge: {
     code: PresenceChallengeCode;
     label: string;
-    publicValue?: string;
   };
 };
 
