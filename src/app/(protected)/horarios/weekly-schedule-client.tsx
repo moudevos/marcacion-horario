@@ -4,7 +4,17 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Save, Store, Users } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Pencil,
+  Save,
+  Store,
+  Users,
+  X,
+} from "lucide-react";
 import Swal from "sweetalert2";
 import { confirmDiscardChanges } from "@/lib/ui/confirm-unsaved";
 import { createCellForMode, SHIFT_PRESETS } from "@/lib/schedules/presets";
@@ -67,12 +77,14 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
   const initialDrafts = useMemo(() => buildDrafts(initialData), [initialData]);
   const [drafts, setDrafts] = useState<Record<string, ScheduleDraftCell>>(initialDrafts);
   const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify(initialDrafts));
+  const [editing, setEditing] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const dirty = JSON.stringify(drafts) !== savedSnapshot;
   const selectedStore = initialData.stores.find((store) => store.id === initialData.selectedStoreId) ?? null;
 
   function setMode(employeeId: string, date: string, mode: ScheduleMode) {
+    if (!editing || isPending) return;
     const key = cellKey(employeeId, date);
     setDrafts((current) => ({
       ...current,
@@ -81,6 +93,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
   }
 
   function patchCell(employeeId: string, date: string, patch: Partial<ScheduleDraftCell>) {
+    if (!editing || isPending) return;
     const key = cellKey(employeeId, date);
     setDrafts((current) => ({
       ...current,
@@ -100,8 +113,16 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
     await navigate(initialData.selectedStoreId, target);
   }
 
+  async function cancelEditing() {
+    if (isPending) return;
+    const canCancel = await confirmDiscardChanges(dirty);
+    if (!canCancel) return;
+    setDrafts(JSON.parse(savedSnapshot) as Record<string, ScheduleDraftCell>);
+    setEditing(false);
+  }
+
   function saveWeek() {
-    if (!initialData.selectedStoreId || !initialData.canEdit) return;
+    if (!initialData.selectedStoreId || !initialData.canEdit || !editing) return;
 
     const entries = initialData.employees.flatMap((employee) =>
       dates.map((date) => {
@@ -131,6 +152,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
       }
 
       setSavedSnapshot(JSON.stringify(drafts));
+      setEditing(false);
       await Swal.fire({
         title: "Semana guardada",
         text: result.message,
@@ -152,30 +174,63 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Horarios</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-600">
-            Define una semana completa por tienda. Usa A, C o AC para horarios rápidos, o P para personalizar ingreso, salida y almuerzo.
+            La matriz inicia protegida en modo consulta. Pulsa Editar horario para habilitar A, C, AC, P y D.
           </p>
         </div>
 
         {initialData.canEdit && initialData.selectedStoreId && (
-          <button
-            type="button"
-            onClick={saveWeek}
-            disabled={isPending || !dirty}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Guardar semana
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {!editing ? (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+              >
+                <Pencil className="h-4 w-4" />
+                Editar horario
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void cancelEditing()}
+                  disabled={isPending}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" />
+                  Cancelar edición
+                </button>
+                <button
+                  type="button"
+                  onClick={saveWeek}
+                  disabled={isPending || !dirty}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Guardar semana
+                </button>
+              </>
+            )}
+          </div>
         )}
       </header>
+
+      <section className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${editing ? "border-amber-200 bg-amber-50 text-amber-900" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+        {editing ? <Pencil className="h-4 w-4 shrink-0" /> : <CalendarDays className="h-4 w-4 shrink-0" />}
+        <p>
+          {editing
+            ? "Modo edición activo. Los botones de turno y campos personalizados pueden modificarse."
+            : "Modo consulta. Ningún clic sobre una celda puede cambiar el horario."}
+        </p>
+      </section>
 
       <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:grid-cols-[minmax(260px,1fr)_auto] lg:items-end">
         <div>
           <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Tienda</label>
           <select
             value={initialData.selectedStoreId ?? ""}
-            onChange={(event) => navigate(event.target.value, initialData.weekStart)}
-            disabled={initialData.stores.length === 0}
+            onChange={(event) => void navigate(event.target.value, initialData.weekStart)}
+            disabled={initialData.stores.length === 0 || isPending}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
           >
             {initialData.stores.length === 0 && <option value="">Sin tiendas disponibles</option>}
@@ -186,7 +241,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
         </div>
 
         <div className="flex items-center justify-between gap-2 lg:justify-end">
-          <button type="button" onClick={() => moveWeek(-7)} disabled={!initialData.selectedStoreId} className="rounded-xl border border-slate-300 p-2.5 text-slate-700 hover:bg-slate-50 disabled:opacity-40" aria-label="Semana anterior">
+          <button type="button" onClick={() => void moveWeek(-7)} disabled={!initialData.selectedStoreId || isPending} className="rounded-xl border border-slate-300 p-2.5 text-slate-700 hover:bg-slate-50 disabled:opacity-40" aria-label="Semana anterior">
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="min-w-52 rounded-xl bg-slate-50 px-4 py-2 text-center">
@@ -195,7 +250,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
               {format(parseISO(initialData.weekStart), "d MMM", { locale: es })} – {format(addDays(parseISO(initialData.weekStart), 6), "d MMM yyyy", { locale: es })}
             </p>
           </div>
-          <button type="button" onClick={() => moveWeek(7)} disabled={!initialData.selectedStoreId} className="rounded-xl border border-slate-300 p-2.5 text-slate-700 hover:bg-slate-50 disabled:opacity-40" aria-label="Semana siguiente">
+          <button type="button" onClick={() => void moveWeek(7)} disabled={!initialData.selectedStoreId || isPending} className="rounded-xl border border-slate-300 p-2.5 text-slate-700 hover:bg-slate-50 disabled:opacity-40" aria-label="Semana siguiente">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -206,7 +261,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
         <Legend code="C" text={`Cierre ${SHIFT_PRESETS.C.startTime}–${SHIFT_PRESETS.C.endTime}`} />
         <Legend code="AC" text={`Apertura/cierre ${SHIFT_PRESETS.AC.startTime}–${SHIFT_PRESETS.AC.endTime} · 2 h almuerzo`} />
         <Legend code="P" text="Personalizado" />
-        <Legend code="L" text="Libre" />
+        <Legend code="D" text="Descanso" />
       </section>
 
       {!selectedStore ? (
@@ -249,7 +304,7 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
                         <td key={date} className="border-r border-slate-100 p-2 align-top last:border-r-0">
                           <ScheduleCell
                             cell={cell}
-                            disabled={!initialData.canEdit || isPending}
+                            editing={editing && initialData.canEdit && !isPending}
                             onMode={(mode) => setMode(employee.id, date, mode)}
                             onPatch={(patch) => patchCell(employee.id, date, patch)}
                           />
@@ -264,10 +319,13 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
         </section>
       )}
 
-      {dirty && initialData.canEdit && (
+      {editing && dirty && initialData.canEdit && (
         <div className="sticky bottom-3 z-30 mx-auto flex max-w-xl items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-lg">
           <p className="text-sm font-medium text-amber-900">Hay cambios sin guardar en esta semana.</p>
-          <button type="button" onClick={saveWeek} disabled={isPending} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Guardar</button>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => void cancelEditing()} disabled={isPending} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-50">Cancelar</button>
+            <button type="button" onClick={saveWeek} disabled={isPending} className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Guardar</button>
+          </div>
         </div>
       )}
     </div>
@@ -276,32 +334,55 @@ export function WeeklyScheduleClient({ initialData }: { initialData: WeeklySched
 
 function ScheduleCell({
   cell,
-  disabled,
+  editing,
   onMode,
   onPatch,
 }: {
   cell: ScheduleDraftCell;
-  disabled: boolean;
+  editing: boolean;
   onMode: (mode: ScheduleMode) => void;
   onPatch: (patch: Partial<ScheduleDraftCell>) => void;
 }) {
+  if (!editing) {
+    return (
+      <div className={`min-h-24 rounded-xl border p-3 ${cell.mode === "OFF" ? "border-slate-200 bg-slate-50" : "border-blue-200 bg-blue-50/50"}`}>
+        {cell.mode === "OFF" ? (
+          <div className="flex min-h-16 flex-col items-center justify-center text-center">
+            <span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-rose-600">D</span>
+            <p className="mt-2 text-xs font-medium text-slate-500">Descanso</p>
+          </div>
+        ) : (
+          <div className="text-center">
+            <span className="inline-flex rounded-md bg-blue-600 px-2 py-1 text-xs font-bold text-white">
+              {cell.mode === "CUSTOM" ? "P" : cell.mode}
+            </span>
+            <p className="mt-3 text-sm font-bold text-slate-900">{cell.startTime} – {cell.endTime}</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {cell.breakMinutes > 0 ? `${cell.breakMinutes} min de almuerzo` : "Sin almuerzo preasignado"}
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`rounded-xl border p-2 ${cell.mode === "OFF" ? "border-slate-200 bg-slate-50" : "border-blue-200 bg-blue-50/50"}`}>
       <div className="grid grid-cols-5 gap-1">
-        <ModeButton label="L" active={cell.mode === "OFF"} disabled={disabled} onClick={() => onMode("OFF")} />
-        <ModeButton label="A" active={cell.mode === "A"} disabled={disabled} onClick={() => onMode("A")} />
-        <ModeButton label="C" active={cell.mode === "C"} disabled={disabled} onClick={() => onMode("C")} />
-        <ModeButton label="AC" active={cell.mode === "AC"} disabled={disabled} onClick={() => onMode("AC")} />
-        <ModeButton label="P" active={cell.mode === "CUSTOM"} disabled={disabled} onClick={() => onMode("CUSTOM")} />
+        <ModeButton label="D" active={cell.mode === "OFF"} onClick={() => onMode("OFF")} />
+        <ModeButton label="A" active={cell.mode === "A"} onClick={() => onMode("A")} />
+        <ModeButton label="C" active={cell.mode === "C"} onClick={() => onMode("C")} />
+        <ModeButton label="AC" active={cell.mode === "AC"} onClick={() => onMode("AC")} />
+        <ModeButton label="P" active={cell.mode === "CUSTOM"} onClick={() => onMode("CUSTOM")} />
       </div>
 
       {cell.mode === "OFF" ? (
-        <p className="py-5 text-center text-xs font-medium text-slate-400">Día libre</p>
+        <p className="py-5 text-center text-xs font-medium text-slate-400">Descanso</p>
       ) : cell.mode === "CUSTOM" ? (
         <div className="mt-2 space-y-2">
           <div className="grid grid-cols-2 gap-2">
-            <TimeField label="Ingreso" value={cell.startTime} disabled={disabled} onChange={(value) => onPatch({ startTime: value })} />
-            <TimeField label="Salida" value={cell.endTime} disabled={disabled} onChange={(value) => onPatch({ endTime: value })} />
+            <TimeField label="Ingreso" value={cell.startTime} onChange={(value) => onPatch({ startTime: value })} />
+            <TimeField label="Salida" value={cell.endTime} onChange={(value) => onPatch({ endTime: value })} />
           </div>
           <label className="block">
             <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Almuerzo (min)</span>
@@ -311,9 +392,8 @@ function ScheduleCell({
               max={240}
               step={15}
               value={cell.breakMinutes}
-              disabled={disabled}
               onChange={(event) => onPatch({ breakMinutes: Math.max(0, Math.min(240, Number(event.target.value) || 0)) })}
-              className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-500 disabled:bg-slate-100"
+              className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-500"
             />
           </label>
         </div>
@@ -329,24 +409,23 @@ function ScheduleCell({
   );
 }
 
-function ModeButton({ label, active, disabled, onClick }: { label: string; active: boolean; disabled: boolean; onClick: () => void }) {
+function ModeButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
-      disabled={disabled}
       onClick={onClick}
-      className={`rounded-md px-1 py-1.5 text-[10px] font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${active ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}
+      className={`rounded-md px-1 py-1.5 text-[10px] font-bold transition ${active ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-100"}`}
     >
       {label}
     </button>
   );
 }
 
-function TimeField({ label, value, disabled, onChange }: { label: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
+function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label>
       <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <input type="time" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-xs outline-none focus:border-blue-500 disabled:bg-slate-100" />
+      <input type="time" value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-slate-300 bg-white px-1.5 py-1.5 text-xs outline-none focus:border-blue-500" />
     </label>
   );
 }
