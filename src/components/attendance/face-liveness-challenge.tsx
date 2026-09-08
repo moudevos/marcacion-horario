@@ -9,6 +9,7 @@ const WASM_ROOT = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAP
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 const FRAME_INTERVAL_MS = 65;
 const MAX_CHALLENGE_MS = 20_000;
+const BENIGN_MEDIAPIPE_LOGS = ["INFO: Created TensorFlow Lite XNNPACK delegate for CPU."] as const;
 
 type Props = {
   challenge: PresenceChallengeCode;
@@ -45,6 +46,38 @@ type Metrics = {
 };
 
 type DetectorState = "loading" | "camera" | "ready" | "no_face" | "multiple_faces" | "verified" | "error";
+
+function isBenignMediapipeLog(args: unknown[]) {
+  const text = args
+    .map((value) => (typeof value === "string" ? value : ""))
+    .filter(Boolean)
+    .join(" ");
+
+  return BENIGN_MEDIAPIPE_LOGS.some((message) => text.includes(message));
+}
+
+function installMediapipeConsoleFilter() {
+  const originalError = console.error;
+  const originalWarn = console.warn;
+
+  const filteredError = (...args: unknown[]) => {
+    if (isBenignMediapipeLog(args)) return;
+    originalError(...args);
+  };
+
+  const filteredWarn = (...args: unknown[]) => {
+    if (isBenignMediapipeLog(args)) return;
+    originalWarn(...args);
+  };
+
+  console.error = filteredError;
+  console.warn = filteredWarn;
+
+  return () => {
+    if (console.error === filteredError) console.error = originalError;
+    if (console.warn === filteredWarn) console.warn = originalWarn;
+  };
+}
 
 function freshMetrics(now = performance.now()): Metrics {
   return {
@@ -109,11 +142,21 @@ export function FaceLivenessChallenge({ challenge, label, onVerified }: Props) {
     let lastProcessedAt = 0;
     let metrics = freshMetrics();
     let completed = false;
+    const restoreMediapipeConsole = installMediapipeConsoleFilter();
 
     function stopResources() {
       if (animationFrame) cancelAnimationFrame(animationFrame);
       stream?.getTracks().forEach((track) => track.stop());
       faceLandmarker?.close();
+    }
+
+    function failDetector(error: unknown) {
+      if (completed || cancelled) return;
+      completed = true;
+      stopResources();
+      restoreMediapipeConsole();
+      setDetectorState("error");
+      setMessage(error instanceof Error ? error.message : "El detector facial no pudo procesar el video. Intenta nuevamente.");
     }
 
     function resetSequence(reason: DetectorState, text: string) {
@@ -145,6 +188,7 @@ export function FaceLivenessChallenge({ challenge, label, onVerified }: Props) {
 
       onVerifiedRef.current(evidence);
       stopResources();
+      restoreMediapipeConsole();
     }
 
     function processResult(result: FaceLandmarkerResultLike, now: number) {
@@ -273,20 +317,26 @@ export function FaceLivenessChallenge({ challenge, label, onVerified }: Props) {
         const tick = () => {
           if (cancelled || completed || !faceLandmarker || !videoRef.current) return;
           const now = performance.now();
+
           if (videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && now - lastProcessedAt >= FRAME_INTERVAL_MS) {
             lastProcessedAt = now;
-            const result = faceLandmarker.detectForVideo(videoRef.current, now);
-            processResult(result, now);
+
+            try {
+              const result = faceLandmarker.detectForVideo(videoRef.current, now);
+              processResult(result, now);
+            } catch (error) {
+              failDetector(error);
+              return;
+            }
           }
+
           animationFrame = requestAnimationFrame(tick);
         };
 
         animationFrame = requestAnimationFrame(tick);
       } catch (error) {
         if (cancelled) return;
-        stopResources();
-        setDetectorState("error");
-        setMessage(error instanceof Error ? error.message : "No se pudo iniciar la prueba de vida facial.");
+        failDetector(error);
       }
     }
 
@@ -295,6 +345,7 @@ export function FaceLivenessChallenge({ challenge, label, onVerified }: Props) {
     return () => {
       cancelled = true;
       stopResources();
+      restoreMediapipeConsole();
     };
   }, [attempt, challenge, label]);
 
