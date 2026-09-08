@@ -1,4 +1,4 @@
-import { Building2, CalendarDays, Clock3, LayoutDashboard, LogOut, ScanLine, Users } from "lucide-react";
+import { BarChart3, Building2, CalendarDays, Clock3, LayoutDashboard, LogOut, ScanLine, Users } from "lucide-react";
 import Link from "next/link";
 
 const navigation = [
@@ -6,10 +6,15 @@ const navigation = [
   { href: "/personal", label: "Personal", icon: Users },
   { href: "/tiendas", label: "Tiendas", icon: Building2 },
   { href: "/horarios", label: "Horarios", icon: CalendarDays },
+  { href: "/analisis-horario", label: "Análisis horario", icon: BarChart3, analysis: true },
   { href: "/marcaciones", label: "Marcaciones", icon: ScanLine },
 ];
 
 export function AppSidebar({ fullName, role, position }: { fullName: string; role: string; position: string }) {
+  const canViewAnalysis =
+    role === "superuser" || ["rh", "zonal", "supervisor", "visualizador"].includes(position);
+  const visibleNavigation = navigation.filter((item) => !item.analysis || canViewAnalysis);
+
   return (
     <aside className="border-b border-slate-800 bg-slate-950 text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r">
       <div className="p-5 lg:sticky lg:top-0">
@@ -23,8 +28,8 @@ export function AppSidebar({ fullName, role, position }: { fullName: string; rol
           </div>
         </div>
 
-        <nav className="grid gap-1 sm:grid-cols-5 lg:grid-cols-1">
-          {navigation.map((item) => {
+        <nav className="grid gap-1 sm:grid-cols-6 lg:grid-cols-1">
+          {visibleNavigation.map((item) => {
             const Icon = item.icon;
             return (
               <Link
