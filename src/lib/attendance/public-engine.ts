@@ -15,18 +15,18 @@ const EVENT_LABELS: Record<PublicAttendanceEvent, string> = {
   check_out: "Salida final",
 };
 
-const CHALLENGES: Array<{ code: PresenceChallengeCode; label: string }> = [
-  { code: "turn_left", label: "Gira ligeramente la cabeza hacia tu izquierda y mantén la mirada en la cámara." },
-  { code: "turn_right", label: "Gira ligeramente la cabeza hacia tu derecha y mantén la mirada en la cámara." },
-  { code: "hand_open", label: "Levanta una mano abierta junto a tu rostro durante la captura." },
-  { code: "two_fingers", label: "Muestra dos dedos junto a tu rostro durante la captura." },
-];
-
 type RawAttendance = {
   check_in: string | null;
   break_out: string | null;
   break_in: string | null;
   check_out: string | null;
+};
+
+type ChallengeDefinition = {
+  code: PresenceChallengeCode;
+  label: string;
+  value: string;
+  publicValue?: string;
 };
 
 function limaWorkDate() {
@@ -56,9 +56,31 @@ function resolveNextEvent(attendance: RawAttendance | null, breakMinutes: number
   return null;
 }
 
-function chooseChallenge(previousCode?: string | null) {
-  const options = CHALLENGES.filter((challenge) => challenge.code !== previousCode);
-  const source = options.length > 0 ? options : CHALLENGES;
+function chooseChallenge(previousCode?: string | null): ChallengeDefinition {
+  const definitions: ChallengeDefinition[] = [
+    {
+      code: "hold_2s",
+      label: "Mantén presionado el botón de firma de vida durante 2 segundos.",
+      value: "held_2s",
+    },
+    {
+      code: "tap_3",
+      label: "Pulsa tres veces el botón de firma de vida.",
+      value: "tap_3",
+    },
+    (() => {
+      const code = String(randomInt(100, 1000));
+      return {
+        code: "type_code" as const,
+        label: `Escribe el código ${code} para completar la firma de vida.`,
+        value: code,
+        publicValue: code,
+      };
+    })(),
+  ];
+
+  const options = definitions.filter((challenge) => challenge.code !== previousCode);
+  const source = options.length > 0 ? options : definitions;
   return source[randomInt(source.length)]!;
 }
 
@@ -117,12 +139,15 @@ export async function createPublicAttendanceSession(input: {
 
   const { data: store, error: storeError } = await admin
     .from("stores")
-    .select("id, code, name, address, latitude, longitude, active")
+    .select("id, code, name, address, latitude, longitude, attendance_radius_meters, active")
     .eq("id", schedule.store_id)
     .maybeSingle();
 
   if (storeError) throw new Error(storeError.message);
   if (!store?.active) throw new Error("No hay una marcación disponible para los datos ingresados");
+  if (store.latitude === null || store.longitude === null) {
+    throw new Error("La tienda aún no tiene una ubicación configurada para marcación");
+  }
 
   const { data: attendance, error: attendanceError } = await admin
     .from("attendance_records")
@@ -136,23 +161,32 @@ export async function createPublicAttendanceSession(input: {
   const nextEvent = resolveNextEvent((attendance as RawAttendance | null) ?? null, schedule.break_minutes ?? 0);
   if (!nextEvent) throw new Error("La jornada de hoy ya está completa");
 
-  const { data: previousEvents, error: previousEventError } = await admin
-    .from("attendance_events")
-    .select("metadata")
-    .eq("employee_id", profile.id)
-    .eq("store_id", store.id)
-    .eq("source", "public_dni")
-    .order("occurred_at", { ascending: false })
-    .limit(1);
+  const [{ data: previousEvents, error: previousEventError }, { count: passkeyCount, error: passkeyError }] = await Promise.all([
+    admin
+      .from("attendance_events")
+      .select("metadata")
+      .eq("employee_id", profile.id)
+      .eq("store_id", store.id)
+      .eq("source", "public_dni")
+      .order("occurred_at", { ascending: false })
+      .limit(1),
+    admin
+      .from("employee_passkeys")
+      .select("id", { count: "exact", head: true })
+      .eq("employee_id", profile.id)
+      .is("revoked_at", null),
+  ]);
 
   if (previousEventError) throw new Error(previousEventError.message);
+  if (passkeyError) throw new Error(passkeyError.message);
+
   const previousMetadata = previousEvents?.[0]?.metadata as Record<string, unknown> | undefined;
   const previousChallenge = typeof previousMetadata?.challenge_code === "string" ? previousMetadata.challenge_code : null;
   const challenge = chooseChallenge(previousChallenge);
 
   const token = randomBytes(32).toString("hex");
   const tokenHash = hashPublicValue(token);
-  const expiresAt = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + 3 * 60 * 1000).toISOString();
 
   const { error: sessionError } = await admin.from("attendance_marking_sessions").insert({
     token_hash: tokenHash,
@@ -162,6 +196,7 @@ export async function createPublicAttendanceSession(input: {
     work_date: workDate,
     expected_event: nextEvent,
     challenge_code: challenge.code,
+    liveness_value: challenge.value,
     request_fingerprint_hash: input.requestFingerprintHash ?? null,
     expires_at: expiresAt,
   });
@@ -179,16 +214,22 @@ export async function createPublicAttendanceSession(input: {
       code: store.code,
       name: store.name,
       address: store.address,
-      latitude: store.latitude,
-      longitude: store.longitude,
+      latitude: Number(store.latitude),
+      longitude: Number(store.longitude),
+      attendanceRadiusMeters: store.attendance_radius_meters ?? 100,
     },
     schedule: {
       startTime: schedule.start_time.slice(0, 5),
       endTime: schedule.end_time.slice(0, 5),
       breakMinutes: schedule.break_minutes ?? 0,
     },
+    passkeyConfigured: (passkeyCount ?? 0) > 0,
     nextEvent,
     nextEventLabel: EVENT_LABELS[nextEvent],
-    challenge,
+    challenge: {
+      code: challenge.code,
+      label: challenge.label,
+      publicValue: challenge.publicValue,
+    },
   };
 }
