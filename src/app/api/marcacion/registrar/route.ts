@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
   getPublicAttendanceEventLabel,
   hashPublicValue,
@@ -9,7 +9,12 @@ import type { PublicAttendanceEvent } from "@/types/public-attendance";
 
 export const runtime = "nodejs";
 
-const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
+const schema = z.object({
+  token: z.string().min(32),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  livenessResponse: z.string().min(1).max(32),
+});
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -25,46 +30,19 @@ function requestFingerprint(request: Request) {
   return `${ip}|${userAgent.slice(0, 180)}`;
 }
 
-function optionalCoordinate(value: FormDataEntryValue | null, min: number, max: number) {
-  if (typeof value !== "string" || value.trim() === "") return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
-    throw new Error("Ubicación inválida");
-  }
-  return parsed;
-}
-
 export async function POST(request: Request) {
   const admin = createAdminClient();
-  let uploadedPath: string | null = null;
 
   try {
-    const formData = await request.formData();
-    const tokenEntry = formData.get("token");
-    const photoEntry = formData.get("photo");
-
-    if (typeof tokenEntry !== "string" || tokenEntry.length < 32) {
-      return json({ ok: false, message: "Sesión de marcación inválida" }, 400);
+    const parsed = schema.safeParse(await request.json());
+    if (!parsed.success) {
+      return json({ ok: false, message: "Faltan validaciones obligatorias para registrar la asistencia" }, 400);
     }
 
-    if (!(photoEntry instanceof File) || photoEntry.type !== "image/jpeg" || photoEntry.size <= 0) {
-      return json({ ok: false, message: "Debes capturar una fotografía válida" }, 400);
-    }
-
-    if (photoEntry.size > MAX_PHOTO_BYTES) {
-      return json({ ok: false, message: "La fotografía supera el tamaño permitido" }, 413);
-    }
-
-    const latitude = optionalCoordinate(formData.get("latitude"), -90, 90);
-    const longitude = optionalCoordinate(formData.get("longitude"), -180, 180);
-    if ((latitude === null) !== (longitude === null)) {
-      return json({ ok: false, message: "La ubicación está incompleta" }, 400);
-    }
-
-    const tokenHash = hashPublicValue(tokenEntry);
+    const tokenHash = hashPublicValue(parsed.data.token);
     const { data: session, error: sessionError } = await admin
       .from("attendance_marking_sessions")
-      .select("id, employee_id, work_date, expected_event, expires_at, used_at, request_fingerprint_hash")
+      .select("id, expected_event, expires_at, used_at, request_fingerprint_hash, passkey_verified_at, challenge_code, liveness_value")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -78,31 +56,34 @@ export async function POST(request: Request) {
       return json({ ok: false, message: "La sesión debe completarse en el mismo dispositivo." }, 400);
     }
 
-    const expectedEvent = session.expected_event as PublicAttendanceEvent;
-    uploadedPath = `${session.work_date}/${session.employee_id}/${expectedEvent}-${randomUUID()}.jpg`;
-    const photoBuffer = Buffer.from(await photoEntry.arrayBuffer());
+    if (!session.passkey_verified_at) {
+      return json({ ok: false, message: "Primero debes validar la Passkey del trabajador." }, 400);
+    }
 
-    const { error: uploadError } = await admin.storage
-      .from("attendance-evidence")
-      .upload(uploadedPath, photoBuffer, {
-        contentType: "image/jpeg",
-        cacheControl: "0",
-        upsert: false,
-      });
+    if (!session.liveness_value || parsed.data.livenessResponse !== session.liveness_value) {
+      return json({ ok: false, message: "La firma de vida no coincide con el reto solicitado." }, 400);
+    }
 
-    if (uploadError) throw new Error(uploadError.message);
+    const now = new Date().toISOString();
+    const { error: livenessError } = await admin
+      .from("attendance_marking_sessions")
+      .update({ liveness_verified_at: now })
+      .eq("id", session.id);
+
+    if (livenessError) throw new Error(livenessError.message);
 
     const userAgent = request.headers.get("user-agent") || "unknown";
-    const { data, error: registerError } = await admin.rpc("register_public_attendance_mark", {
+    const { data, error: registerError } = await admin.rpc("register_public_attendance_mark_v2", {
       p_session_id: session.id,
       p_token_hash: tokenHash,
-      p_evidence_path: uploadedPath,
-      p_latitude: latitude,
-      p_longitude: longitude,
+      p_latitude: parsed.data.latitude,
+      p_longitude: parsed.data.longitude,
       p_metadata: {
         user_agent_hash: hashPublicValue(userAgent),
-        capture_method: "browser_camera",
-        biometric_matching: false,
+        validation_model: "dni+schedule+passkey+interactive_liveness+geofence",
+        webauthn_user_verification_required: true,
+        face_image_stored: false,
+        server_biometric_template_stored: false,
       },
     });
 
@@ -112,22 +93,20 @@ export async function POST(request: Request) {
       event?: PublicAttendanceEvent;
       occurred_at?: string;
       attendance_status?: string | null;
+      distance_meters?: number | null;
     } | null;
-    const event = result?.event ?? expectedEvent;
+    const event = result?.event ?? (session.expected_event as PublicAttendanceEvent);
 
     return json({
       ok: true,
       message: `${getPublicAttendanceEventLabel(event)} registrado correctamente`,
       event,
       eventLabel: getPublicAttendanceEventLabel(event),
-      occurredAt: result?.occurred_at ?? new Date().toISOString(),
+      occurredAt: result?.occurred_at ?? now,
       attendanceStatus: result?.attendance_status ?? null,
+      distanceMeters: result?.distance_meters ?? null,
     });
   } catch (error) {
-    if (uploadedPath) {
-      await admin.storage.from("attendance-evidence").remove([uploadedPath]);
-    }
-
     const message = error instanceof Error ? error.message : "No se pudo registrar la marcación";
     return json({ ok: false, message }, 400);
   }
