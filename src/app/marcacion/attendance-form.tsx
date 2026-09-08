@@ -181,6 +181,12 @@ export function AttendanceForm() {
     );
   }
 
+  function retakePhoto() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setCapturedPhoto(null);
+    setPreviewUrl(null);
+  }
+
   async function registerMark() {
     if (!session || !capturedPhoto || isRegistering) return;
     setIsRegistering(true);
@@ -297,11 +303,10 @@ export function AttendanceForm() {
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
           <div className="relative aspect-[4/3] w-full bg-black">
-            {previewUrl ? (
+            <video ref={videoRef} muted playsInline autoPlay className="h-full w-full object-cover" />
+            {previewUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="Evidencia capturada" className="h-full w-full object-cover" />
-            ) : (
-              <video ref={videoRef} muted playsInline autoPlay className="h-full w-full object-cover" />
+              <img src={previewUrl} alt="Evidencia capturada" className="absolute inset-0 h-full w-full object-cover" />
             )}
             {cameraError && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-950 p-6 text-center text-sm text-white">
@@ -314,7 +319,7 @@ export function AttendanceForm() {
           <div className="grid gap-2 bg-white p-4 sm:grid-cols-2">
             <button
               type="button"
-              onClick={previewUrl ? () => { setCapturedPhoto(null); URL.revokeObjectURL(previewUrl); setPreviewUrl(null); } : capturePhoto}
+              onClick={previewUrl ? retakePhoto : capturePhoto}
               disabled={Boolean(cameraError) || isRegistering}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
