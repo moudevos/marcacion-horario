@@ -9,11 +9,24 @@ import type { PublicAttendanceEvent } from "@/types/public-attendance";
 
 export const runtime = "nodejs";
 
+const livenessSchema = z.object({
+  engine: z.literal("mediapipe_face_landmarker"),
+  engineVersion: z.literal("1.0.1"),
+  challenge: z.enum(["blink_twice", "mouth_open", "brow_raise", "nose_sneer"]),
+  durationMs: z.number().int().min(300).max(20_000),
+  processedFrames: z.number().int().min(6).max(500),
+  singleFaceFrames: z.number().int().min(6).max(500),
+  validFrames: z.number().int().min(1).max(500),
+  transitions: z.number().int().min(1).max(4),
+  peakScore: z.number().min(0).max(1),
+  completedAt: z.string().datetime(),
+});
+
 const schema = z.object({
   token: z.string().min(32),
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  livenessResponse: z.string().min(1).max(32),
+  liveness: livenessSchema,
 });
 
 function json(body: unknown, status = 200) {
@@ -30,6 +43,35 @@ function requestFingerprint(request: Request) {
   return `${ip}|${userAgent.slice(0, 180)}`;
 }
 
+function validateLivenessEvidence(
+  expectedChallenge: string,
+  evidence: z.infer<typeof livenessSchema>,
+) {
+  if (evidence.challenge !== expectedChallenge) {
+    throw new Error("La prueba de vida no corresponde al reto solicitado.");
+  }
+
+  if (evidence.singleFaceFrames !== evidence.processedFrames) {
+    throw new Error("La prueba de vida requiere exactamente un rostro durante toda la secuencia válida.");
+  }
+
+  if (evidence.challenge === "blink_twice") {
+    if (evidence.transitions < 2 || evidence.validFrames < 2 || evidence.peakScore < 0.5) {
+      throw new Error("No se pudo validar correctamente el doble parpadeo.");
+    }
+    return;
+  }
+
+  if (evidence.transitions !== 1 || evidence.validFrames < 4) {
+    throw new Error("La prueba de vida facial no tuvo suficiente continuidad.");
+  }
+
+  const minimumScore = evidence.challenge === "mouth_open" ? 0.5 : evidence.challenge === "brow_raise" ? 0.34 : 0.32;
+  if (evidence.peakScore < minimumScore) {
+    throw new Error("El gesto facial no alcanzó el nivel mínimo requerido.");
+  }
+}
+
 export async function POST(request: Request) {
   const admin = createAdminClient();
 
@@ -42,7 +84,7 @@ export async function POST(request: Request) {
     const tokenHash = hashPublicValue(parsed.data.token);
     const { data: session, error: sessionError } = await admin
       .from("attendance_marking_sessions")
-      .select("id, expected_event, expires_at, used_at, request_fingerprint_hash, passkey_verified_at, challenge_code, liveness_value")
+      .select("id, expected_event, expires_at, used_at, request_fingerprint_hash, passkey_verified_at, challenge_code")
       .eq("token_hash", tokenHash)
       .maybeSingle();
 
@@ -57,12 +99,10 @@ export async function POST(request: Request) {
     }
 
     if (!session.passkey_verified_at) {
-      return json({ ok: false, message: "Primero debes validar la Passkey del trabajador." }, 400);
+      return json({ ok: false, message: "Primero debes validar la identidad del trabajador." }, 400);
     }
 
-    if (!session.liveness_value || parsed.data.livenessResponse !== session.liveness_value) {
-      return json({ ok: false, message: "La firma de vida no coincide con el reto solicitado." }, 400);
-    }
+    validateLivenessEvidence(session.challenge_code, parsed.data.liveness);
 
     const now = new Date().toISOString();
     const { error: livenessError } = await admin
@@ -80,9 +120,11 @@ export async function POST(request: Request) {
       p_longitude: parsed.data.longitude,
       p_metadata: {
         user_agent_hash: hashPublicValue(userAgent),
-        validation_model: "dni+schedule+passkey+interactive_liveness+geofence",
+        validation_model: "dni+schedule+passkey+facial_liveness+geofence",
         webauthn_user_verification_required: true,
+        liveness: parsed.data.liveness,
         face_image_stored: false,
+        face_video_stored: false,
         server_biometric_template_stored: false,
       },
     });
