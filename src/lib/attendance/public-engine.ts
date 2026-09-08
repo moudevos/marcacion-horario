@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   PresenceChallengeCode,
@@ -59,7 +59,7 @@ function resolveNextEvent(attendance: RawAttendance | null, breakMinutes: number
 function chooseChallenge(previousCode?: string | null) {
   const options = CHALLENGES.filter((challenge) => challenge.code !== previousCode);
   const source = options.length > 0 ? options : CHALLENGES;
-  return source[Math.floor(Math.random() * source.length)]!;
+  return source[randomInt(source.length)]!;
 }
 
 export async function consumePublicAttendanceRateLimit(input: {
