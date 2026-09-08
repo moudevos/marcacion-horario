@@ -15,11 +15,13 @@ import {
   Store,
   UserRound,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
 import Swal from "sweetalert2";
 import { z } from "zod";
+import { FaceLivenessChallenge } from "@/components/attendance/face-liveness-challenge";
 import type {
+  FaceLivenessEvidence,
   PublicAttendanceRegisterResult,
   PublicAttendanceSessionResponse,
 } from "@/types/public-attendance";
@@ -62,13 +64,11 @@ function getCoordinates(): Promise<Coordinates> {
 }
 
 export function AttendanceForm() {
-  const holdStartedAt = useRef<number | null>(null);
   const [session, setSession] = useState<PublicAttendanceSessionResponse | null>(null);
   const [dni, setDni] = useState("");
   const [enrollmentCode, setEnrollmentCode] = useState("");
   const [passkeyVerified, setPasskeyVerified] = useState(false);
-  const [livenessResponse, setLivenessResponse] = useState("");
-  const [tapCount, setTapCount] = useState(0);
+  const [livenessEvidence, setLivenessEvidence] = useState<FaceLivenessEvidence | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [result, setResult] = useState<PublicAttendanceRegisterResult | null>(null);
 
@@ -79,11 +79,14 @@ export function AttendanceForm() {
     formState: { errors, isSubmitting },
   } = useForm<AttendanceInput>({ resolver: zodResolver(attendanceSchema) });
 
+  const handleLivenessVerified = useCallback((evidence: FaceLivenessEvidence) => {
+    setLivenessEvidence(evidence);
+  }, []);
+
   async function onSubmit(values: AttendanceInput) {
     setResult(null);
     setPasskeyVerified(false);
-    setLivenessResponse("");
-    setTapCount(0);
+    setLivenessEvidence(null);
     setDni(values.dni);
 
     const response = await fetch("/api/marcacion/iniciar", {
@@ -137,14 +140,14 @@ export function AttendanceForm() {
 
       await Swal.fire({
         icon: "success",
-        title: "Dispositivo enrolado",
-        text: "La Passkey quedó asociada. Inicia nuevamente la marcación para validarla.",
+        title: "Dispositivo activado",
+        text: "La credencial quedó asociada sin crear una contraseña del sistema. Inicia nuevamente la marcación para validarla.",
       });
       startAgain();
     } catch (error) {
       await Swal.fire({
         icon: "error",
-        title: "No se pudo enrolar",
+        title: "No se pudo activar",
         text: error instanceof Error ? error.message : "Error al registrar la Passkey",
       });
     } finally {
@@ -190,30 +193,8 @@ export function AttendanceForm() {
     }
   }
 
-  function handleLivenessTap() {
-    if (!session || session.challenge.code !== "tap_3") return;
-    const next = tapCount + 1;
-    setTapCount(next);
-    if (next >= 3) setLivenessResponse("tap_3");
-  }
-
-  function beginHold() {
-    holdStartedAt.current = Date.now();
-  }
-
-  function finishHold() {
-    if (!session || session.challenge.code !== "hold_2s" || holdStartedAt.current === null) return;
-    const duration = Date.now() - holdStartedAt.current;
-    holdStartedAt.current = null;
-    if (duration >= 1800) {
-      setLivenessResponse("held_2s");
-    } else {
-      void Swal.fire({ icon: "info", title: "Mantén presionado", text: "Debes mantener el botón durante aproximadamente 2 segundos." });
-    }
-  }
-
   async function registerMark() {
-    if (!session || !passkeyVerified || !livenessResponse || isWorking) return;
+    if (!session || !passkeyVerified || !livenessEvidence || isWorking) return;
     setIsWorking(true);
 
     try {
@@ -225,7 +206,7 @@ export function AttendanceForm() {
           token: session.token,
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
-          livenessResponse,
+          liveness: livenessEvidence,
         }),
       });
       const payload = await response.json() as PublicAttendanceRegisterResult;
@@ -251,8 +232,7 @@ export function AttendanceForm() {
     setResult(null);
     setEnrollmentCode("");
     setPasskeyVerified(false);
-    setLivenessResponse("");
-    setTapCount(0);
+    setLivenessEvidence(null);
     setDni("");
     reset();
   }
@@ -315,10 +295,10 @@ export function AttendanceForm() {
           <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-center gap-2 text-amber-900">
               <KeyRound className="h-5 w-5" />
-              <h2 className="font-bold">Primer enrolamiento del dispositivo</h2>
+              <h2 className="font-bold">Activar marcación en este dispositivo</h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-amber-900">
-              Solicita al Supervisor/Admin un código temporal desde Marcaciones. El dispositivo guardará una Passkey; el servidor no recibe huella ni rostro.
+              Solicita al Supervisor/Admin un código temporal desde Marcaciones. No crearás una contraseña del sistema; el dispositivo registrará una Passkey protegida por su autenticador local.
             </p>
             <div className="mt-4 flex gap-2">
               <input
@@ -329,7 +309,7 @@ export function AttendanceForm() {
                 className="min-w-0 flex-1 rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-sm tracking-widest outline-none focus:border-amber-500"
               />
               <button type="button" onClick={enrollPasskey} disabled={!/^\d{8}$/.test(enrollmentCode) || isWorking} className="rounded-xl bg-amber-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
-                Enrolar
+                Activar
               </button>
             </div>
           </section>
@@ -337,56 +317,29 @@ export function AttendanceForm() {
           <section className={`rounded-2xl border p-4 ${passkeyVerified ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
             <div className="flex items-center gap-2">
               <Fingerprint className={`h-5 w-5 ${passkeyVerified ? "text-emerald-700" : "text-blue-700"}`} />
-              <h2 className="font-bold text-slate-950">Validación del dispositivo</h2>
+              <h2 className="font-bold text-slate-950">Validación de identidad</h2>
             </div>
             <p className="mt-2 text-sm text-slate-600">
-              {passkeyVerified ? "Passkey validada correctamente." : "Usa la Passkey registrada. El dispositivo puede solicitar huella, Face ID, Windows Hello o PIN local."}
+              {passkeyVerified ? "Identidad del dispositivo validada correctamente." : "Usa la credencial registrada. El dispositivo puede solicitar huella, Face ID, Windows Hello o PIN local; no es una contraseña del sistema."}
             </p>
             {!passkeyVerified && (
               <button type="button" onClick={validatePasskey} disabled={isWorking} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
                 {isWorking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Fingerprint className="h-4 w-4" />}
-                Validar Passkey
+                Verificar identidad
               </button>
             )}
           </section>
         )}
 
         {session.passkeyConfigured && passkeyVerified && (
-          <section className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Firma de vida interactiva</p>
-            <p className="mt-2 font-semibold leading-6 text-violet-950">{session.challenge.label}</p>
-
-            {session.challenge.code === "hold_2s" && (
-              <button
-                type="button"
-                onPointerDown={beginHold}
-                onPointerUp={finishHold}
-                onPointerCancel={() => { holdStartedAt.current = null; }}
-                className={`mt-4 w-full rounded-xl px-4 py-3 text-sm font-semibold ${livenessResponse ? "bg-emerald-600 text-white" : "bg-violet-700 text-white"}`}
-              >
-                {livenessResponse ? "Firma completada" : "Mantener presionado"}
-              </button>
-            )}
-
-            {session.challenge.code === "tap_3" && (
-              <button type="button" onClick={handleLivenessTap} className={`mt-4 w-full rounded-xl px-4 py-3 text-sm font-semibold ${livenessResponse ? "bg-emerald-600 text-white" : "bg-violet-700 text-white"}`}>
-                {livenessResponse ? "Firma completada" : `Pulsar (${tapCount}/3)`}
-              </button>
-            )}
-
-            {session.challenge.code === "type_code" && (
-              <input
-                value={livenessResponse}
-                onChange={(event) => setLivenessResponse(event.target.value.replace(/\D/g, "").slice(0, 3))}
-                inputMode="numeric"
-                placeholder="Escribe el código"
-                className="mt-4 w-full rounded-xl border border-violet-300 bg-white px-4 py-3 text-center text-lg font-bold tracking-[0.35em] outline-none focus:border-violet-500"
-              />
-            )}
-          </section>
+          <FaceLivenessChallenge
+            challenge={session.challenge.code}
+            label={session.challenge.label}
+            onVerified={handleLivenessVerified}
+          />
         )}
 
-        {session.passkeyConfigured && passkeyVerified && livenessResponse && (
+        {session.passkeyConfigured && passkeyVerified && livenessEvidence && (
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex items-start gap-3">
               <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
@@ -434,7 +387,7 @@ export function AttendanceForm() {
 
       <div className="flex gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
         <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-        <p>DNI, horario, fecha, Passkey, firma de vida interactiva y geocerca se validan antes de escribir la asistencia.</p>
+        <p>DNI, horario, fecha, identidad, prueba de vida facial y geocerca se validan antes de escribir la asistencia.</p>
       </div>
     </form>
   );
