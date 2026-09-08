@@ -11,6 +11,13 @@ export const runtime = "nodejs";
 
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
+}
+
 function requestFingerprint(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ip = forwarded || request.headers.get("x-real-ip") || "unknown";
@@ -37,21 +44,21 @@ export async function POST(request: Request) {
     const photoEntry = formData.get("photo");
 
     if (typeof tokenEntry !== "string" || tokenEntry.length < 32) {
-      return NextResponse.json({ ok: false, message: "Sesión de marcación inválida" }, { status: 400 });
+      return json({ ok: false, message: "Sesión de marcación inválida" }, 400);
     }
 
     if (!(photoEntry instanceof File) || photoEntry.type !== "image/jpeg" || photoEntry.size <= 0) {
-      return NextResponse.json({ ok: false, message: "Debes capturar una fotografía válida" }, { status: 400 });
+      return json({ ok: false, message: "Debes capturar una fotografía válida" }, 400);
     }
 
     if (photoEntry.size > MAX_PHOTO_BYTES) {
-      return NextResponse.json({ ok: false, message: "La fotografía supera el tamaño permitido" }, { status: 413 });
+      return json({ ok: false, message: "La fotografía supera el tamaño permitido" }, 413);
     }
 
     const latitude = optionalCoordinate(formData.get("latitude"), -90, 90);
     const longitude = optionalCoordinate(formData.get("longitude"), -180, 180);
     if ((latitude === null) !== (longitude === null)) {
-      return NextResponse.json({ ok: false, message: "La ubicación está incompleta" }, { status: 400 });
+      return json({ ok: false, message: "La ubicación está incompleta" }, 400);
     }
 
     const tokenHash = hashPublicValue(tokenEntry);
@@ -63,12 +70,12 @@ export async function POST(request: Request) {
 
     if (sessionError) throw new Error(sessionError.message);
     if (!session || session.used_at || new Date(session.expires_at).getTime() <= Date.now()) {
-      return NextResponse.json({ ok: false, message: "La sesión expiró. Inicia nuevamente." }, { status: 400 });
+      return json({ ok: false, message: "La sesión expiró. Inicia nuevamente." }, 400);
     }
 
     const fingerprintHash = hashPublicValue(requestFingerprint(request));
     if (session.request_fingerprint_hash && session.request_fingerprint_hash !== fingerprintHash) {
-      return NextResponse.json({ ok: false, message: "La sesión debe completarse en el mismo dispositivo." }, { status: 400 });
+      return json({ ok: false, message: "La sesión debe completarse en el mismo dispositivo." }, 400);
     }
 
     const expectedEvent = session.expected_event as PublicAttendanceEvent;
@@ -108,7 +115,7 @@ export async function POST(request: Request) {
     } | null;
     const event = result?.event ?? expectedEvent;
 
-    return NextResponse.json({
+    return json({
       ok: true,
       message: `${getPublicAttendanceEventLabel(event)} registrado correctamente`,
       event,
@@ -122,6 +129,6 @@ export async function POST(request: Request) {
     }
 
     const message = error instanceof Error ? error.message : "No se pudo registrar la marcación";
-    return NextResponse.json({ ok: false, message }, { status: 400 });
+    return json({ ok: false, message }, 400);
   }
 }
