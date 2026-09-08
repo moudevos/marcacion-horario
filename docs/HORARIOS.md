@@ -7,7 +7,17 @@ El módulo `/horarios` administra la planificación semanal por tienda y replica
 - una fila por trabajador activo asignado a la tienda;
 - siete columnas, de lunes a domingo;
 - cada celda representa el horario de ese trabajador para una fecha;
-- `D` representa descanso en el formato exportado y se guarda sin horario activo para ese día.
+- `D` representa descanso y se guarda sin horario activo para ese día.
+
+## Modo seguro de edición
+
+La matriz se abre siempre en modo consulta. En ese estado las celdas no contienen controles interactivos y un clic accidental no puede modificar el horario.
+
+Para cambiar una semana se debe pulsar `Editar horario`. Mientras el modo edición está activo se habilitan los botones A/C/AC/P/D y los campos de horario personalizado.
+
+- `Guardar semana` persiste los cambios y vuelve a modo consulta;
+- `Cancelar edición` restaura la última versión guardada;
+- si existen cambios pendientes, cancelar o cambiar de tienda/semana solicita confirmación antes de descartarlos.
 
 ## Accesos rápidos
 
@@ -64,15 +74,6 @@ El Excel contiene tres bloques en una misma hoja:
 El archivo incluye el número de semana ISO (`WKxx`), encabezado azul, columnas de DNI/CE y cargo, días/fechas, bordes, fila de Supervisor resaltada y nombre de archivo por tienda y semana.
 
 La exportación usa la última versión persistida en Supabase para que el archivo enviado coincida con el horario oficial guardado.
-
-## Cambios sin guardar
-
-Al cambiar de tienda o semana, si la matriz fue modificada, se muestra la confirmación reutilizable:
-
-- `Cerrar sin guardar`;
-- `Seguir editando`.
-
-También aparece una barra inferior mientras haya cambios pendientes.
 
 ## SQL requerido
 
