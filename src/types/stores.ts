@@ -5,6 +5,7 @@ export type StoreRecord = {
   address: string | null;
   latitude: number | null;
   longitude: number | null;
+  attendanceRadiusMeters: number;
   active: boolean;
   personnelCount: number;
   schedulesCount: number;
