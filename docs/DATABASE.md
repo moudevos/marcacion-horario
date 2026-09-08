@@ -19,7 +19,8 @@ Los scripts actuales son:
 3. `supabase/sql/03_tipo_trabajador.sql`;
 4. `supabase/sql/04_modulo_tiendas.sql`;
 5. `supabase/sql/05_horarios_semanales.sql`;
-6. `supabase/sql/06_ubicacion_tiendas.sql`.
+6. `supabase/sql/06_ubicacion_tiendas.sql`;
+7. `supabase/sql/07_motor_marcacion_publica.sql`.
 
 ## `profiles`
 
@@ -37,7 +38,7 @@ Tiendas o puntos de trabajo. Además de código, nombre, dirección y estado, pu
 
 Las coordenadas son opcionales para mantener compatibilidad con tiendas existentes, pero si se registra una debe registrarse también la otra. PostgreSQL valida latitud entre -90 y 90 y longitud entre -180 y 180.
 
-El CRUD permite escribir las coordenadas manualmente o seleccionar el punto en un mapa OpenStreetMap. Esta ubicación queda disponible para una futura validación de marcaciones por proximidad/geocerca; el script 06 todavía no activa reglas de distancia.
+El CRUD permite escribir las coordenadas manualmente o seleccionar el punto en un mapa OpenStreetMap. Esta ubicación queda disponible para una futura validación de marcaciones por proximidad/geocerca; por ahora el motor público registra la posición del dispositivo como evidencia cuando está disponible, pero no rechaza por distancia.
 
 ## `user_store_assignments`
 
@@ -45,23 +46,47 @@ Relaciona usuarios con las tiendas que forman su alcance operativo.
 
 ## `schedules`
 
-Horario de un colaborador en una fecha y tienda determinada. Permite tolerancia en minutos y desactivación lógica.
+Horario de un colaborador en una fecha y tienda determinada. Permite tolerancia en minutos y desactivación lógica. Desde el script 05 también almacena código de turno y minutos de almuerzo.
 
 ## `attendance_records`
 
-Estado consolidado de asistencia por colaborador y fecha: entrada, salida, estado y notas.
+Estado consolidado de asistencia por colaborador y fecha. Desde el script 07 contiene:
+
+- `check_in`: ingreso;
+- `break_out`: salida a almuerzo;
+- `break_in`: retorno de almuerzo;
+- `check_out`: salida final;
+- estado y notas.
+
+La secuencia temporal se valida con una restricción PostgreSQL.
 
 ## `attendance_events`
 
-Historial inmutable de eventos de asistencia. Conserva la trazabilidad de entradas, salidas y correcciones.
+Historial de eventos de asistencia. Conserva la trazabilidad de ingreso, salida/retorno de almuerzo, salida final y correcciones. Las marcaciones públicas guardan en `metadata` la ruta privada de evidencia, reto de presencia y ubicación disponible.
+
+## `attendance_marking_sessions`
+
+Sesiones efímeras utilizadas por `/marcacion`. Cada sesión contiene únicamente el hash del token, trabajador, tienda, horario, fecha, evento esperado, reto aleatorio, expiración y estado de uso.
+
+No tiene permisos directos para `anon` ni `authenticated`. La sesión expira a los dos minutos y se consume una sola vez.
+
+## `attendance_public_rate_limits`
+
+Control interno de intentos de la página pública. Las claves son hashes y no se expone la tabla al cliente.
+
+## Storage `attendance-evidence`
+
+Bucket privado creado por el script 07 para fotografías de evidencia de marcación. La aplicación no almacena el DNI en la ruta del objeto ni concede acceso directo desde la página pública.
+
+No se implementa comparación facial ni generación de plantillas biométricas automáticas.
 
 ## `audit_logs`
 
-Base para auditoría administrativa futura.
+Base para auditoría administrativa.
 
 ## Política de escritura
 
-RLS habilita lectura por alcance, pero el esquema inicial no concede mutaciones operativas directas a clientes autenticados. Personal, tiendas, horarios y correcciones de marcación deben pasar por Server Actions/Route Handlers que:
+RLS habilita lectura por alcance, pero el esquema no concede mutaciones operativas directas a clientes autenticados. Personal, tiendas, horarios y correcciones de marcación deben pasar por Server Actions/Route Handlers que:
 
 1. validen sesión;
 2. resuelvan rol, cargo y tiendas;
@@ -69,4 +94,4 @@ RLS habilita lectura por alcance, pero el esquema inicial no concede mutaciones 
 4. usen la clave secreta únicamente en servidor;
 5. escriban auditoría cuando corresponda.
 
-La ruta pública tampoco obtiene acceso SQL anónimo.
+La ruta pública tampoco obtiene acceso SQL anónimo. La búsqueda de DNI, creación de sesiones, subida de evidencia y registro de eventos se realizan desde rutas de servidor y funciones accesibles únicamente con privilegios de servidor.
