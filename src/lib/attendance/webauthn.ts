@@ -7,7 +7,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
   type AuthenticationResponseJSON,
-  type AuthenticatorTransportFuture,
+  type AuthenticatorTransport,
   type RegistrationResponseJSON,
   type WebAuthnCredential,
 } from "@simplewebauthn/server";
@@ -127,7 +127,7 @@ export async function generatePasskeyRegistrationOptions(input: {
     supportedAlgorithmIDs: [-7, -257],
     excludeCredentials: (existing ?? []).map((credential) => ({
       id: credential.credential_id,
-      transports: (credential.transports ?? []) as AuthenticatorTransportFuture[],
+      transports: (credential.transports ?? []) as AuthenticatorTransport[],
     })),
     authenticatorSelection: {
       authenticatorAttachment: "platform",
@@ -233,7 +233,7 @@ export async function generatePasskeyAuthenticationOptions(input: {
     userVerification: "required",
     allowCredentials: credentials.map((credential) => ({
       id: credential.credential_id,
-      transports: (credential.transports ?? []) as AuthenticatorTransportFuture[],
+      transports: (credential.transports ?? []) as AuthenticatorTransport[],
     })),
   });
 
@@ -270,7 +270,7 @@ export async function verifyPasskeyAuthentication(input: {
     id: stored.credential_id,
     publicKey: new Uint8Array(Buffer.from(stored.public_key, "base64url")),
     counter: Number(stored.counter),
-    transports: (stored.transports ?? []) as AuthenticatorTransportFuture[],
+    transports: (stored.transports ?? []) as AuthenticatorTransport[],
   };
 
   const { rpID, origin } = configFromRequest(input.request);
