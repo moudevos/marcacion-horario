@@ -27,6 +27,8 @@ Cuando `break_minutes = 0`:
 
 La siguiente acción no la decide el navegador. Siempre se recalcula en servidor y nuevamente dentro de la función transaccional `register_public_attendance_mark`.
 
+El script 07 crea `attendance_mark_type` con `check_in`, `break_out`, `break_in` y `check_out`. El historial existente `attendance_events.event_type` se mantiene compatible: ingreso/salida usan sus tipos originales y los eventos de almuerzo se registran como `manual_adjustment` con el `mark_type` exacto dentro de `metadata`.
+
 ## Reto de presencia
 
 Cada sesión recibe un reto distinto del utilizado en la marcación pública anterior del trabajador cuando es posible:
@@ -46,6 +48,7 @@ El nombre del objeto no contiene DNI. Utiliza fecha, UUID del trabajador, tipo d
 
 `attendance_events.metadata` registra:
 
+- tipo funcional exacto de marcación (`mark_type`);
 - ruta privada de la evidencia;
 - reto asignado;
 - ubicación si el navegador la entrega;
@@ -95,7 +98,7 @@ Debe ejecutarse después de `06_ubicacion_tiendas.sql`.
 
 El script:
 
-- agrega `break_out` y `break_in` al enum de eventos;
+- crea el enum independiente `attendance_mark_type`;
 - agrega salida/retorno de almuerzo a `attendance_records`;
 - crea sesiones efímeras públicas;
 - crea almacenamiento de rate limit;
