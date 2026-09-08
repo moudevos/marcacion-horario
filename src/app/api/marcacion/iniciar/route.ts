@@ -12,6 +12,13 @@ const requestSchema = z.object({
   dni: z.string().regex(/^\d{8}$/),
 });
 
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store, max-age=0" },
+  });
+}
+
 function requestFingerprint(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const ip = forwarded || request.headers.get("x-real-ip") || "unknown";
@@ -25,10 +32,7 @@ export async function POST(request: Request) {
     const parsed = requestSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { ok: false, message: "Ingresa un DNI válido de 8 dígitos" },
-        { status: 400 },
-      );
+      return json({ ok: false, message: "Ingresa un DNI válido de 8 dígitos" }, 400);
     }
 
     const fingerprint = requestFingerprint(request);
@@ -38,9 +42,9 @@ export async function POST(request: Request) {
     });
 
     if (!allowed) {
-      return NextResponse.json(
+      return json(
         { ok: false, message: "Demasiados intentos. Espera unos minutos antes de volver a intentar." },
-        { status: 429 },
+        429,
       );
     }
 
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
       requestFingerprintHash: hashPublicValue(fingerprint),
     });
 
-    return NextResponse.json({ ok: true, session });
+    return json({ ok: true, session });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo iniciar la marcación";
     const safeMessage = message.includes("jornada de hoy ya está completa")
@@ -58,6 +62,6 @@ export async function POST(request: Request) {
         ? message
         : "No se pudo iniciar la marcación. Verifica tus datos e intenta nuevamente.";
 
-    return NextResponse.json({ ok: false, message: safeMessage }, { status: 400 });
+    return json({ ok: false, message: safeMessage }, 400);
   }
 }
