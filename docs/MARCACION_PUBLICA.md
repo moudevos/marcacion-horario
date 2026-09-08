@@ -1,19 +1,48 @@
-# Motor de marcación pública
+# Motor de marcación
 
-La ruta `/marcacion` implementa el flujo público de asistencia sin iniciar sesión.
+La ruta pública `/marcacion` registra asistencia sin iniciar sesión y el módulo protegido `/marcaciones` permite supervisión operativa, enrolamiento de dispositivos y excepciones administrativas.
 
-## Flujo
+## Validaciones de una marcación pública
 
-1. el trabajador ingresa su DNI;
-2. el servidor busca el identificador privado y valida que el perfil esté activo;
-3. se obtiene el horario activo del día usando `America/Lima`;
-4. se resuelve automáticamente la siguiente acción;
-5. se crea una sesión efímera de dos minutos y un reto aleatorio de presencia;
-6. el navegador solicita la cámara frontal y muestra la instrucción del reto;
-7. el trabajador realiza la acción y captura una fotografía;
-8. al confirmar, el navegador intenta adjuntar también la ubicación del dispositivo;
-9. la fotografía se almacena en el bucket privado `attendance-evidence`;
-10. PostgreSQL vuelve a validar la sesión, el horario y la secuencia antes de registrar la marcación.
+La confirmación final exige, en este orden lógico:
+
+1. DNI válido y trabajador activo;
+2. fecha de trabajo en `America/Lima`;
+3. horario activo del trabajador para la tienda;
+4. secuencia correcta de evento (`Ingreso`, `Salida a almuerzo`, `Retorno de almuerzo`, `Salida final`);
+5. Passkey WebAuthn válida con `userVerification: required`;
+6. firma de vida interactiva aleatoria;
+7. ubicación GPS dentro de la geocerca de la tienda;
+8. nueva validación transaccional en PostgreSQL justo antes de escribir la asistencia.
+
+## Passkeys y biometría local
+
+El sistema no almacena huellas, rostros, embeddings ni plantillas biométricas en Supabase.
+
+WebAuthn permite que el autenticador local del dispositivo solicite Face ID, huella, Windows Hello o PIN. Esa verificación sucede dentro del sistema operativo/autenticador. El servidor recibe una prueba criptográfica firmada y conserva únicamente:
+
+- identificador de credencial;
+- clave pública;
+- contador;
+- transportes;
+- tipo de dispositivo y estado de respaldo cuando el autenticador los reporta.
+
+La autenticación usa `userVerification: required` y `requireUserVerification: true`.
+
+## Primer enrolamiento
+
+Conocer un DNI no permite registrar una nueva Passkey.
+
+El flujo es:
+
+1. Supervisor/Admin abre `/marcaciones`;
+2. genera un código de enrolamiento de 8 dígitos para el trabajador;
+3. el código dura 10 minutos y sustituye cualquier código anterior pendiente del mismo trabajador;
+4. el trabajador abre `/marcacion` desde su propio dispositivo;
+5. ingresa DNI + código temporal;
+6. el navegador crea la Passkey usando el autenticador local;
+7. el servidor verifica la ceremonia WebAuthn y guarda solo la credencial pública;
+8. el código queda consumido y no puede reutilizarse.
 
 ## Secuencia diaria
 
@@ -25,88 +54,85 @@ Cuando `break_minutes = 0`:
 
 `Ingreso -> Salida final`
 
-La siguiente acción no la decide el navegador. Siempre se recalcula en servidor y nuevamente dentro de la función transaccional `register_public_attendance_mark`.
+La siguiente acción nunca se decide únicamente en el navegador. Se vuelve a resolver en PostgreSQL antes de escribir.
 
-El script 07 crea `attendance_mark_type` con `check_in`, `break_out`, `break_in` y `check_out`. El historial existente `attendance_events.event_type` se mantiene compatible: ingreso/salida usan sus tipos originales y los eventos de almuerzo se registran como `manual_adjustment` con el `mark_type` exacto dentro de `metadata`.
+## Firma de vida interactiva
 
-## Reto de presencia
+Cada sesión utiliza una acción diferente a la anterior cuando es posible:
 
-Cada sesión recibe un reto distinto del utilizado en la marcación pública anterior del trabajador cuando es posible:
+- mantener presionado durante aproximadamente 2 segundos;
+- pulsar tres veces;
+- escribir un código aleatorio de tres dígitos.
 
-- girar la cabeza a la izquierda;
-- girar la cabeza a la derecha;
-- mostrar una mano abierta;
-- mostrar dos dedos.
+Esta prueba demuestra interacción activa con la sesión. No realiza análisis facial ni debe describirse como detección biométrica de vida.
 
-El reto y la fotografía sirven como evidencia auditable de presencia. La implementación no compara rostros, no genera embeddings faciales y no crea plantillas biométricas automáticas.
+## Geocerca
 
-## Evidencia
+Las tiendas usan `latitude`, `longitude` y `attendance_radius_meters`.
 
-Las imágenes se guardan mediante `service_role` en el bucket privado `attendance-evidence`.
+El script 08 establece inicialmente un radio de 100 metros, con validación de base de datos entre 20 y 1000 metros.
 
-El nombre del objeto no contiene DNI. Utiliza fecha, UUID del trabajador, tipo de evento y un UUID aleatorio.
+Al confirmar:
 
-`attendance_events.metadata` registra:
+1. el navegador solicita ubicación precisa;
+2. PostgreSQL calcula distancia mediante fórmula Haversine;
+3. si la distancia supera el radio configurado, la marcación pública no se registra;
+4. la distancia calculada queda en metadata del evento si la marcación es válida.
 
-- tipo funcional exacto de marcación (`mark_type`);
-- ruta privada de la evidencia;
-- reto asignado;
-- ubicación si el navegador la entrega;
-- hash del user-agent;
-- método de captura;
-- indicador explícito `biometric_matching: false`.
-
-No se concede acceso directo al bucket desde la página pública.
+Una falla de GPS/geocerca no marca automáticamente al trabajador como ausente. Un Supervisor/Admin puede resolver la excepción desde `/marcaciones` mediante una marcación administrativa con motivo obligatorio.
 
 ## Protección contra abuso
 
-`/api/marcacion/iniciar` aplica un límite de 8 intentos por ventana de 10 minutos para una combinación hash de dispositivo/red + DNI.
+`/api/marcacion/iniciar` aplica rate limit a los intentos de DNI.
 
-El token de la sesión:
+Las sesiones públicas:
 
-- se genera con 32 bytes aleatorios;
-- solo se devuelve una vez al navegador;
-- en PostgreSQL se almacena únicamente su SHA-256;
-- expira en dos minutos;
-- solo puede utilizarse una vez;
-- queda ligado a un hash de la huella de solicitud para completar el flujo en el mismo dispositivo.
+- usan tokens aleatorios;
+- almacenan solo el SHA-256 del token;
+- duran pocos minutos;
+- se consumen una sola vez;
+- quedan ligadas a la huella técnica de la solicitud;
+- mantienen el challenge WebAuthn y los estados de validación únicamente en servidor.
 
-Los mensajes de búsqueda son deliberadamente genéricos para reducir enumeración de DNI.
+Las respuestas con tokens/challenges usan `Cache-Control: no-store`.
 
-## Estado de asistencia
+## Dashboard `/marcaciones`
 
-En el ingreso, el motor compara la hora actual en `America/Lima` con `start_time + tolerance_minutes`:
+El dashboard muestra el personal programado del día dentro del alcance del usuario:
 
-- dentro de tolerancia: `present`;
-- después de tolerancia: `late`.
+- tienda y horario;
+- ingreso;
+- salida/retorno de almuerzo;
+- salida final;
+- estado de asistencia;
+- siguiente evento esperado;
+- cantidad de Passkeys activas.
 
-Las marcas de almuerzo y salida actualizan el mismo `attendance_record` y además generan un `attendance_event` histórico.
+Perfiles de gestión pueden:
 
-## Integración con análisis
+- generar código temporal de enrolamiento;
+- registrar la siguiente marcación de forma administrativa.
 
-A partir del script 07, `attendance_records` almacena también `break_out` y `break_in`.
+La marcación administrativa exige motivo de al menos 5 caracteres, genera `attendance_event` con `source = admin` y agrega un registro a `audit_logs`.
 
-`/analisis-horario` utiliza el tiempo real de almuerzo cuando ambas marcas existen. Para datos históricos anteriores al motor usa `break_minutes` planificado como fallback.
+## Fotografías históricas
+
+El script 07 creó el bucket privado `attendance-evidence`. A partir del modelo del script 08, el flujo nuevo no sube fotografías y no utiliza ese bucket.
+
+No se elimina automáticamente el bucket en el script 08 para evitar destruir evidencias históricas que pudieran existir. Su eliminación/retención puede definirse posteriormente como una política de datos.
 
 ## SQL requerido
 
-Ejecutar manualmente en Supabase SQL Editor:
+Ejecutar manualmente, en orden:
 
-`supabase/sql/07_motor_marcacion_publica.sql`
+- `supabase/sql/07_motor_marcacion_publica.sql`;
+- `supabase/sql/08_passkeys_geocerca_y_marcacion_dashboard.sql`.
 
-Debe ejecutarse después de `06_ubicacion_tiendas.sql`.
+El script 08 agrega:
 
-El script:
-
-- crea el enum independiente `attendance_mark_type`;
-- agrega salida/retorno de almuerzo a `attendance_records`;
-- crea sesiones efímeras públicas;
-- crea almacenamiento de rate limit;
-- crea el bucket privado de evidencia;
-- crea `consume_attendance_rate_limit`;
-- crea `register_public_attendance_mark`;
-- mantiene todas estas operaciones fuera del acceso SQL directo de `anon` y `authenticated`.
-
-## Pendientes de política operativa
-
-Antes de producción debe definirse una política organizacional para retención y eliminación de fotografías de evidencia. También puede agregarse posteriormente una geocerca por tienda usando las coordenadas almacenadas en `stores`; el motor actual registra la ubicación como evidencia, pero no rechaza una marcación por distancia.
+- `stores.attendance_radius_meters`;
+- `employee_passkeys`;
+- `passkey_enrollment_tokens`;
+- estado WebAuthn/geocerca/firma de vida en `attendance_marking_sessions`;
+- `register_public_attendance_mark_v2`;
+- `register_admin_attendance_mark`.
