@@ -12,6 +12,7 @@ type RawStore = {
   address: string | null;
   latitude: number | null;
   longitude: number | null;
+  attendance_radius_meters: number;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -35,7 +36,7 @@ export async function getStoresModuleData(): Promise<StoresModuleData> {
   const [storesResponse, assignmentsResponse, schedulesResponse, attendanceResponse] = await Promise.all([
     admin
       .from("stores")
-      .select("id, code, name, address, latitude, longitude, active, created_at, updated_at")
+      .select("id, code, name, address, latitude, longitude, attendance_radius_meters, active, created_at, updated_at")
       .order("name"),
     admin.from("user_store_assignments").select("store_id"),
     admin.from("schedules").select("store_id"),
@@ -68,6 +69,7 @@ export async function getStoresModuleData(): Promise<StoresModuleData> {
         address: store.address,
         latitude: store.latitude,
         longitude: store.longitude,
+        attendanceRadiusMeters: store.attendance_radius_meters ?? 100,
         active: store.active,
         personnelCount,
         schedulesCount,
